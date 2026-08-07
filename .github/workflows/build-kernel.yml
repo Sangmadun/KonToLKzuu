@@ -116,7 +116,7 @@ jobs:
 
       - name: Patch KernelSU Hook & Legacy Headers
         run: |
-          # 1. Patch syscall_hook.h untuk KernelSU-Next
+          # 1. Patch syscall_hook.h untuk KernelSU-Next (dengan parameter pt_regs)
           HOOK_FILE=$(find . -name "syscall_hook.h" | grep "drivers/kernelsu" | head -n 1)
 
           if [ -n "$HOOK_FILE" ]; then
@@ -127,9 +127,9 @@ jobs:
           if os.path.exists(path):
               with open(path, "r") as f:
                   content = f.read()
-              if "syscall_fn_t" in content and "typedef void (*syscall_fn_t)" not in content:
+              if "syscall_fn_t" in content and "typedef" not in content:
                   print("🔧 Menerapkan patch syscall_fn_t...")
-                  patch = "#include <linux/syscalls.h>\n#include <asm/syscall.h>\n#ifndef syscall_fn_t\ntypedef void (*syscall_fn_t)(void);\n#endif\n"
+                  patch = "#include <linux/syscalls.h>\n#include <asm/syscall.h>\n#ifndef syscall_fn_t\nstruct pt_regs;\ntypedef long (*syscall_fn_t)(struct pt_regs *);\n#endif\n"
                   with open(path, "w") as f:
                       f.write(patch + content)
           '
