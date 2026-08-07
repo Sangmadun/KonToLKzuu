@@ -114,8 +114,9 @@ jobs:
         with:
           ksu_fork: ${{ inputs.ksu_fork }}
 
-      - name: Patch KernelSU Hook
+      - name: Patch KernelSU Hook & Legacy Headers
         run: |
+          # 1. Patch syscall_hook.h untuk KernelSU-Next
           HOOK_FILE=$(find . -name "syscall_hook.h" | grep "drivers/kernelsu" | head -n 1)
 
           if [ -n "$HOOK_FILE" ]; then
@@ -131,11 +132,14 @@ jobs:
                   patch = "#include <linux/syscalls.h>\n#include <asm/syscall.h>\n#ifndef syscall_fn_t\ntypedef void (*syscall_fn_t)(void);\n#endif\n"
                   with open(path, "w") as f:
                       f.write(patch + content)
-              else:
-                  print("✅ Patch tidak diperlukan atau sudah terpasang.")
           '
-          else
-            echo "⚠️ File syscall_hook.h tidak ditemukan!"
+          fi
+
+          # 2. Patch linux/pgtable.h -> asm/pgtable.h untuk Kernel Legacy (4.14)
+          PGTABLE_HEADER=$(find . -maxdepth 4 -path "*/include/linux/pgtable.h" | head -n 1)
+          if [ -z "$PGTABLE_HEADER" ]; then
+            echo "🔧 Kernel legacy (4.14) terdeteksi, mengganti linux/pgtable.h ke asm/pgtable.h..."
+            find . -path "*/drivers/kernelsu/*" -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|<linux/pgtable.h>|<asm/pgtable.h>|g' {} +
           fi
 
       - name: Apply SUSFS Patch & Configs
