@@ -116,12 +116,28 @@ jobs:
 
       - name: Patch KernelSU Hook
         run: |
-         HOOK_FILE=$(find . -path "*/drivers/kernelsu/hook/syscall_hook.h" | head -n 1)
-         if [ -n "$HOOK_FILE" ] && grep -q "syscall_fn_t" "$HOOK_FILE" && ! grep -q "linux/syscalls.h" "$HOOK_FILE"; then
-          echo "🔧 Menerapkan patch pada: $HOOK_FILE"
-          perl -i -pe 's|#define __KSU_SYSCALL_HOOK_H|$&\n#include <linux/syscalls.h>\n#include <asm/syscall.h>\n#ifndef syscall_fn_t\ntypedef void (*syscall_fn_t)(void);\n#endif|' "$HOOK_FILE"
-         fi
-         
+          HOOK_FILE=$(find . -name "syscall_hook.h" | grep "drivers/kernelsu" | head -n 1)
+
+          if [ -n "$HOOK_FILE" ]; then
+            echo "🔍 File ditemukan: $HOOK_FILE"
+            python3 -c '
+          import os
+          path = "'"$HOOK_FILE"'"
+          if os.path.exists(path):
+              with open(path, "r") as f:
+                  content = f.read()
+              if "syscall_fn_t" in content and "typedef void (*syscall_fn_t)" not in content:
+                  print("🔧 Menerapkan patch syscall_fn_t...")
+                  patch = "#include <linux/syscalls.h>\n#include <asm/syscall.h>\n#ifndef syscall_fn_t\ntypedef void (*syscall_fn_t)(void);\n#endif\n"
+                  with open(path, "w") as f:
+                      f.write(patch + content)
+              else:
+                  print("✅ Patch tidak diperlukan atau sudah terpasang.")
+          '
+          else
+            echo "⚠️ File syscall_hook.h tidak ditemukan!"
+          fi
+
       - name: Apply SUSFS Patch & Configs
         if: inputs.include_susfs == true
         uses: ./.github/actions/apply-susfs
@@ -172,10 +188,10 @@ jobs:
         with:
           name: kernel-assets
           path: |
-           *.zip
-           *.sha256
-           changelog.txt
-           commit_link.txt
+            *.zip
+            *.sha256
+            changelog.txt
+            commit_link.txt
           if-no-files-found: error
 
       - name: Send Telegram Failure Notification & Cancel Jobs
@@ -189,11 +205,10 @@ jobs:
         run: |
           python3 .github/scripts/telegram_notify.py failure
           gh run cancel ${{ github.run_id }}
-          
-  # =========================================================================
-  # JOB 2: BUILD MANAGER APP
-  # =========================================================================
-  
+
+# =========================================================================
+# JOB 2: BUILD MANAGER APP
+# =========================================================================
   build-manager:
     needs: build-kernel
     if: |
