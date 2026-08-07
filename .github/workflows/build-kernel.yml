@@ -114,6 +114,13 @@ jobs:
         with:
           ksu_fork: ${{ inputs.ksu_fork }}
 
+      - name: Patch KernelSU-Next Hook
+        run: |
+         FILE="kernel-source/drivers/kernelsu/hook/syscall_hook.h"
+         if [ -f "$FILE" ] && grep -q "syscall_fn_t" "$FILE" && ! grep -q "linux/syscalls.h" "$FILE"; then
+          perl -i -pe 's|#define __KSU_SYSCALL_HOOK_H|$&\n#include <linux/syscalls.h>\n#include <asm/syscall.h>\n#ifndef syscall_fn_t\ntypedef void (*syscall_fn_t)(void);\n#endif|' "$FILE"
+         fi
+         
       - name: Apply SUSFS Patch & Configs
         if: inputs.include_susfs == true
         uses: ./.github/actions/apply-susfs
