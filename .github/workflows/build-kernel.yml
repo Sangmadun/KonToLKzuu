@@ -164,9 +164,10 @@ jobs:
         with:
           name: kernel-assets
           path: |
-            **/*.zip
-            **/*.sha256
-            **/*.txt
+           *.zip
+           *.sha256
+           changelog.txt
+           commit_link.txt
           if-no-files-found: error
 
       - name: Send Telegram Failure Notification & Cancel Jobs
