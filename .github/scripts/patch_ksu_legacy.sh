@@ -230,3 +230,23 @@ static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
     with open(path, "w") as f:
         f.write(content)
 EOF
+
+# 8. Patch app_profile.c (nonaktifkan pengaksesan filter_count di struct seccomp)
+python3 << 'EOF'
+import glob, re
+
+ap_files = glob.glob("**/drivers/kernelsu/policy/app_profile.c", recursive=True)
+for path in ap_files:
+    with open(path, "r") as f:
+        content = f.read()
+
+    if "seccomp.filter_count" in content:
+        print("🔧 Menerapkan patch filter_count app_profile pada: " + path)
+        content = re.sub(
+            r"([^\n]*seccomp\.filter_count[^\n]*)",
+            r"// \1",
+            content
+        )
+        with open(path, "w") as f:
+            f.write(content)
+EOF
