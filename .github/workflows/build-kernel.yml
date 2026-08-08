@@ -1,4 +1,4 @@
-name: Build Kernel & Manager Worker
+Name: Build Kernel & Manager Worker
 
 on:
   workflow_call:
@@ -191,8 +191,9 @@ jobs:
   build-manager:
     needs: build-kernel
     if: |
-      always() && !cancelled() && (
-        inputs.build_target == 'both' || inputs.build_target == 'manager_only'
+      !cancelled() && (
+        inputs.build_target == 'manager_only' ||
+        (inputs.build_target == 'both' && needs.build-kernel.result == 'success')
       )
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -223,7 +224,7 @@ jobs:
   publish-release:
     needs: [build-kernel, build-manager]
     if: |
-      always() && !cancelled() && (
+      !cancelled() && (
         (inputs.build_target == 'both' && needs.build-kernel.result == 'success' && needs.build-manager.result == 'success') ||
         (inputs.build_target == 'kernel_only' && needs.build-kernel.result == 'success') ||
         (inputs.build_target == 'manager_only' && needs.build-manager.result == 'success')
