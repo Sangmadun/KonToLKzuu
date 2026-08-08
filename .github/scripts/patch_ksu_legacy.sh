@@ -150,3 +150,39 @@ EOF
 # 6. Fallback patch iopoll presisi
 echo "🔧 Memastikan patch iopoll terpasang dengan rapi..."
 find . -path "*/drivers/kernelsu/infra/file_wrapper.c" -exec sed -i 's/return orig->f_op->iopoll.*/#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)\nreturn orig->f_op->iopoll(kiocb, spin);\n#else\nreturn -EOPNOTSUPP;\n#endif/g' {} +
+
+# 7. Patch pkg_observer.c (fsnotify_ops -> handle_event untuk Kernel < 5.9)
+python3 << 'EOF'
+import glob
+
+po_files = glob.glob("**/drivers/kernelsu/manager/pkg_observer.c", recursive=True)
+for path in po_files:
+    with open(path, "r") as f:
+        content = f.read()
+
+    if ".handle_inode_event" in content:
+        print("🔧 Menerapkan patch fsnotify_ops pkg_observer 4.14 pada: " + path)
+        wrapper = """
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
+static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
+                            struct fsnotify_mark *inode_mark, struct fsnotify_mark *vfsmount_mark,
+                            u32 mask, const void *data, int data_type,
+                            const unsigned char *file_name, u32 cookie,
+                            struct fsnotify_iter_info *iter_info)
+{
+    struct qstr qstr_name = {
+        .name = file_name,
+        .len = file_name ? strlen((const char *)file_name) : 0
+    };
+    return ksu_handle_inode_event(inode_mark, mask, to_tell, NULL, &qstr_name, cookie);
+}
+#endif
+"""
+        content = content.replace("static struct fsnotify_ops", wrapper + "\nstatic struct fsnotify_ops")
+        content = content.replace(
+            ".handle_inode_event = ksu_handle_inode_event,",
+            """#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)\n    .handle_event = ksu_handle_event,\n#else\n    .handle_inode_event = ksu_handle_inode_event,\n#endif"""
+        )
+        with open(path, "w") as f:
+            f.write(content)
+EOF
