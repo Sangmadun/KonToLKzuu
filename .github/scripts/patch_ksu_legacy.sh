@@ -302,8 +302,8 @@ for path in sep_files:
     if "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)" not in content:
         print("🔧 Menerapkan patch kompatibilitas sepolicy 4.14 pada: " + path)
         
-        patch_code = """
-#include <linux/version.h>
+        patch_code = """#include <linux/version.h>
+#include <linux/types.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
 // Dummy wrappers for legacy 4.14 kernels where 5.10+ policydb layout is not supported directly in-kernel
