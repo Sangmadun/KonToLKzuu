@@ -250,3 +250,36 @@ for path in ap_files:
         with open(path, "w") as f:
             f.write(content)
 EOF
+
+# 9. Patch SELinux rules.c & sepolicy untuk Kernel < 5.10 (4.14 compatibility)
+python3 << 'EOF'
+import glob, re
+
+selinux_files = glob.glob("**/drivers/kernelsu/selinux/*.[ch]", recursive=True)
+for path in selinux_files:
+    with open(path, "r") as f:
+        content = f.read()
+
+    header_patch = """#include <linux/version.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#ifndef selinux_policy
+#define selinux_policy selinux_ss
+#endif
+#ifndef policy_mutex
+#define policy_mutex ss->policy_mutex
+#endif
+#endif
+"""
+    if "#ifndef selinux_policy" not in content:
+        content = header_patch + "\n" + content
+
+    content = re.sub(
+        r"\bselinux_state\.policy\b",
+        "selinux_state.ss",
+        content
+    )
+
+    print("🔧 Menerapkan patch SELinux 4.14 pada: " + path)
+    with open(path, "w") as f:
+        f.write(content)
+EOF
