@@ -5,9 +5,9 @@ echo "---------------------------------------"
 echo "🔧 Running KernelSU Legacy Patch Script"
 echo "---------------------------------------"
 
-# 0. Global Fix: Injeksi header, typedef __poll_t, & fallback SECCOMP
-echo "🔧 Menerapkan injeksi global __poll_t & SECCOMP_ARCH_NATIVE_NR..."
-find . -path "*/drivers/kernelsu/*" -type f \( -name "*.h" -o -name "*.c" \) -exec sed -i '1s|^|#include <linux/version.h>\n#include <linux/types.h>\n#include <linux/poll.h>\n#include <linux/seccomp.h>\n#include <asm/unistd.h>\n#ifndef __poll_t\ntypedef unsigned int __poll_t;\n#define __poll_t __poll_t\n#endif\n#ifndef SECCOMP_ARCH_NATIVE_NR\n#ifdef NR_syscalls\n#define SECCOMP_ARCH_NATIVE_NR NR_syscalls\n#elif defined(__NR_syscalls)\n#define SECCOMP_ARCH_NATIVE_NR __NR_syscalls\n#else\n#define SECCOMP_ARCH_NATIVE_NR 500\n#endif\n#endif\n|' {} +
+# 0. Global Fix: Injeksi header, typedef __poll_t, SECCOMP, TWA_RESUME, & fallthrough
+echo "🔧 Menerapkan injeksi global __poll_t, SECCOMP, TWA_RESUME & fallthrough..."
+find . -path "*/drivers/kernelsu/*" -type f \( -name "*.h" -o -name "*.c" \) -exec sed -i '1s|^|#include <linux/version.h>\n#include <linux/types.h>\n#include <linux/poll.h>\n#include <linux/seccomp.h>\n#include <asm/unistd.h>\n#ifndef __poll_t\ntypedef unsigned int __poll_t;\n#define __poll_t __poll_t\n#endif\n#ifndef SECCOMP_ARCH_NATIVE_NR\n#ifdef NR_syscalls\n#define SECCOMP_ARCH_NATIVE_NR NR_syscalls\n#elif defined(__NR_syscalls)\n#define SECCOMP_ARCH_NATIVE_NR __NR_syscalls\n#else\n#define SECCOMP_ARCH_NATIVE_NR 500\n#endif\n#endif\n#ifndef TWA_RESUME\n#define TWA_RESUME 1\n#endif\n#ifndef fallthrough\n#define fallthrough do {} while (0)\n#endif\n|' {} +
 
 # 0.1 Replace <uapi/linux/mount.h> dengan <linux/mount.h> untuk Kernel Legacy
 echo "🔧 Mengganti <uapi/linux/mount.h> -> <linux/mount.h>..."
@@ -181,11 +181,9 @@ static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
 #endif
 """
 
-    # Sisipkan wrapper fungsi jika belum ada
     if "static int ksu_handle_event" not in content:
         content = re.sub(r"(static\s+(?:const\s+)?struct\s+fsnotify_ops)", wrapper + r"\n\1", content, count=1)
 
-    # Ganti penugasan field .handle_inode_event menjadi pembungkus versi kernel
     content = re.sub(
         r"\.handle_inode_event\s*=\s*ksu_handle_inode_event\s*,?",
         """#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)\n    .handle_event = ksu_handle_event,\n#else\n    .handle_inode_event = ksu_handle_inode_event,\n#endif""",
