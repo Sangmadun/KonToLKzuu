@@ -2,7 +2,7 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script"
+echo "🔧 Running KernelSU Legacy & Multi-Manager Patch Script"
 echo "---------------------------------------"
 
 python3 << 'EOF'
@@ -61,7 +61,7 @@ for path in ksu_files:
     if not os.path.exists("include/linux/pgtable.h"):
         content = content.replace("<linux/pgtable.h>", "<asm/pgtable.h>")
 
-    # File-specific patches
+    # Patch File-Spesifik Legacy Kernel
     if "syscall_hook.h" in path and "syscall_fn_t)" not in content:
         patch = "#include <linux/syscalls.h>\n#include <asm/syscall.h>\n#ifndef syscall_fn_t\nstruct pt_regs;\ntypedef long (*syscall_fn_t)(const struct pt_regs *);\n#endif\n"
         content = patch + content
@@ -133,7 +133,47 @@ void ksu_sepolicy_exit(void) {}
 """
         content = patch_code + content + "\n#endif\n"
 
-    # Tulis kembali hanya jika ada perubahan
+    # Patch selinux_hide.c untuk Kernel Legacy < 5.10
+    if "selinux_hide.c" in path and "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)" not in content:
+        patch_hide = """#include <linux/version.h>
+#include <linux/types.h>
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+// Dummy stub for legacy kernels
+void ksu_selinux_hide_init(void) {}
+void ksu_selinux_hide_exit(void) {}
+#else
+"""
+        content = patch_hide + content + "\n#endif\n"
+
+    # =========================================================================
+    # MULTI-MANAGER PATCH (Support Official, Next, SukiSU, ResuKSU, MKSU, dll)
+    # =========================================================================
+    if ("apk_sign.c" in path or "apk_sign.h" in path or "manager.c" in path):
+        if "ksu_is_manager_apk" in content and "MULTI_MANAGER_PATCHED" not in content:
+            multi_hash_check = """
+/* MULTI_MANAGER_PATCHED */
+static const char *ksu_allowed_manager_hashes[] = {
+    "e885c3c1e2d671d18413e15091e9f138864f16a037803e48113c412e69888d3e", // Official
+    "3504179373d5778a486129a25b29b35a72064c0234a742f360e65383f98246cb", // Next
+    NULL
+};
+
+bool ksu_is_manager_apk(const char *hash) {
+    if (!hash) return false;
+    for (int i = 0; ksu_allowed_manager_hashes[i] != NULL; i++) {
+        if (strcasecmp(hash, ksu_allowed_manager_hashes[i]) == 0) return true;
+    }
+    return false;
+}
+"""
+            content = re.sub(
+                r"bool\s+ksu_is_manager_apk\s*\([^)]*\)\s*\{[^}]*\}",
+                multi_hash_check,
+                content
+            )
+
+    # Tulis kembali file jika ada perubahan
     if content != orig_content:
         with open(path, "w") as f:
             f.write(content)
@@ -167,5 +207,5 @@ for path in glob.glob("**/drivers/kernelsu/infra/file_wrapper.c", recursive=True
     with open(path, "w") as f:
         f.write(code)
 
-print("✅ Patch KernelSU Legacy selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy & Multi-Manager selesai dilaksanakan!")
 EOF
