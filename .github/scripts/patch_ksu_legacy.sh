@@ -151,7 +151,7 @@ EOF
 echo "🔧 Memastikan patch iopoll terpasang dengan rapi..."
 find . -path "*/drivers/kernelsu/infra/file_wrapper.c" -exec sed -i 's/return orig->f_op->iopoll.*/#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)\nreturn orig->f_op->iopoll(kiocb, spin);\n#else\nreturn -EOPNOTSUPP;\n#endif/g' {} +
 
-# 7. Patch pkg_observer.c (fsnotify_ops -> handle_event untuk Kernel < 5.9)
+# 7. Patch pkg_observer.c (fsnotify_ops -> handle_event dengan forward declaration)
 python3 << 'EOF'
 import glob
 
@@ -160,10 +160,14 @@ for path in po_files:
     with open(path, "r") as f:
         content = f.read()
 
-    if ".handle_inode_event" in content:
+    if ".handle_inode_event" in content and "ksu_handle_event" not in content:
         print("🔧 Menerapkan patch fsnotify_ops pkg_observer 4.14 pada: " + path)
         wrapper = """
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
+static int ksu_handle_inode_event(struct fsnotify_mark *mark, u32 mask,
+                                  struct inode *inode, struct inode *dir,
+                                  const struct qstr *file_name, u32 cookie);
+
 static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
                             struct fsnotify_mark *inode_mark, struct fsnotify_mark *vfsmount_mark,
                             u32 mask, const void *data, int data_type,
