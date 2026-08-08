@@ -85,16 +85,40 @@ for path in pm_files:
             f.write(content)
 '
 
-# 5. Patch file_wrapper.c untuk Kernel Legacy (4.14 VFS compatibility)
+# 5. Patch file_wrapper.c secara presisi untuk Kernel Legacy (4.14 VFS)
 python3 -c '
-import glob
+import glob, re
+
+def wrap_function(code, func_name):
+    # Hapus deklarasi forward jika ada
+    code = re.sub(r"static\s+[^{;]*?\b" + func_name + r"\b[^{;]*?;", f"/* disabled {func_name} decl */", code, flags=re.DOTALL)
+    # Cari definisi fungsi
+    pattern = r"static\s+[^{]*?\b" + func_name + r"\b[^{]*?\{"
+    match = re.search(pattern, code, re.DOTALL)
+    if not match:
+        return code
+    start_pos = match.start()
+    brace_pos = match.end() - 1
+    depth = 1
+    cur = brace_pos + 1
+    while cur < len(code) and depth > 0:
+        if code[cur] == "{":
+            depth += 1
+        elif code[cur] == "}":
+            depth -= 1
+        cur += 1
+    end_pos = cur
+    func_code = code[start_pos:end_pos]
+    wrapped = f"\n#if 0 /* Disabled {func_name} for kernel 4.14 */\n{func_code}\n#endif\n"
+    return code[:start_pos] + wrapped + code[end_pos:]
 
 fw_files = glob.glob("**/drivers/kernelsu/infra/file_wrapper.c", recursive=True)
 for path in fw_files:
     with open(path, "r") as f:
         content = f.read()
 
-    patch_header = """#include <linux/poll.h>
+    header_patch = """#include <linux/version.h>
+#include <linux/poll.h>
 #include <linux/errno.h>
 #ifndef __poll_t
 typedef unsigned int __poll_t;
@@ -103,21 +127,22 @@ typedef unsigned int __poll_t;
 #define REMAP_FILE_DEDUP 0
 #endif
 """
-    lines = content.splitlines()
-    new_lines = []
-    
-    for line in lines:
-        if any(k in line for k in ["iopoll", "fadvise", "mmap_supported_flags", "remap_file_range"]):
-            if "return " in line:
-                new_lines.append("return -EOPNOTSUPP;")
-            elif "if (" in line or "if(" in line:
-                new_lines.append("if (0) {")
-            else:
-                new_lines.append("// " + line)
-        else:
-            new_lines.append(line)
+    # 1. Tambahkan header di bagian atas
+    content = header_patch + "\n" + content
+
+    # 2. Nonaktifkan fungsi handler operasi yang tidak didukung kernel 4.14
+    for func in ["ksu_wrapper_iopoll", "ksu_wrapper_remap_file_range", "ksu_wrapper_fadvise"]:
+        content = wrap_function(content, func)
+
+    # 3. Comment out penugasan field operasi pada struct sampai titik koma
+    content = re.sub(
+        r"p->ops\.(iopoll|mmap_supported_flags|remap_file_range|fadvise)\s*=[^;]*?;",
+        r"/* \g<0> */",
+        content,
+        flags=re.DOTALL
+    )
 
     print("🔧 Menerapkan patch VFS file_wrapper 4.14 pada: " + path)
     with open(path, "w") as f:
-        f.write(patch_header + "\n".join(new_lines))
+        f.write(content)
 '
