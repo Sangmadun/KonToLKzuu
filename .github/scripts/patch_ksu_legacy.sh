@@ -7,7 +7,43 @@ echo "---------------------------------------"
 
 # 0. Global Fix: Injeksi header, typedef __poll_t, SECCOMP, TWA_RESUME, & fallthrough
 echo "🔧 Menerapkan injeksi global __poll_t, SECCOMP, TWA_RESUME & fallthrough..."
-find . -path "*/drivers/kernelsu/*" -type f \( -name "*.h" -o -name "*.c" \) -exec sed -i '1s|^|#include <linux/version.h>\n#include <linux/types.h>\n#include <linux/poll.h>\n#include <linux/seccomp.h>\n#include <asm/unistd.h>\n#ifndef __poll_t\ntypedef unsigned int __poll_t;\n#define __poll_t __poll_t\n#endif\n#ifndef SECCOMP_ARCH_NATIVE_NR\n#ifdef NR_syscalls\n#define SECCOMP_ARCH_NATIVE_NR NR_syscalls\n#elif defined(__NR_syscalls)\n#define SECCOMP_ARCH_NATIVE_NR __NR_syscalls\n#else\n#define SECCOMP_ARCH_NATIVE_NR 500\n#endif\n#endif\n#ifndef TWA_RESUME\n#define TWA_RESUME 1\n#endif\n#ifndef fallthrough\n#define fallthrough do {} while (0)\n#endif\n|' {} +
+python3 << 'EOF'
+import glob
+
+headers = """#include <linux/version.h>
+#include <linux/types.h>
+#include <linux/poll.h>
+#include <linux/seccomp.h>
+#include <asm/unistd.h>
+#ifndef __poll_t
+typedef unsigned int __poll_t;
+#define __poll_t __poll_t
+#endif
+#ifndef SECCOMP_ARCH_NATIVE_NR
+#ifdef NR_syscalls
+#define SECCOMP_ARCH_NATIVE_NR NR_syscalls
+#elif defined(__NR_syscalls)
+#define SECCOMP_ARCH_NATIVE_NR __NR_syscalls
+#else
+#define SECCOMP_ARCH_NATIVE_NR 500
+#endif
+#endif
+#ifndef TWA_RESUME
+#define TWA_RESUME 1
+#endif
+#ifndef fallthrough
+#define fallthrough do {} while (0)
+#endif
+"""
+
+files = glob.glob("**/drivers/kernelsu/**/*.c", recursive=True) + glob.glob("**/drivers/kernelsu/**/*.h", recursive=True)
+for path in files:
+    with open(path, "r") as f:
+        content = f.read()
+    if "#ifndef __poll_t" not in content:
+        with open(path, "w") as f:
+            f.write(headers + "\n" + content)
+EOF
 
 # 0.1 Replace <uapi/linux/mount.h> dengan <linux/mount.h> untuk Kernel Legacy
 echo "🔧 Mengganti <uapi/linux/mount.h> -> <linux/mount.h>..."
