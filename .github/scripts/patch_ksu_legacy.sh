@@ -1,132 +1,147 @@
-      - name: Patch KernelSU for Kernel 4.14
-        run: |
-          echo "---------------------------------------"
-          echo "🔧 Running KernelSU Legacy Patch Script"
-          echo "---------------------------------------"
+#!/bin/bash
+set -e
 
-          # 1. Patch syscall_hook.h
-          HOOK_FILE=$(find . -name "syscall_hook.h" | grep "drivers/kernelsu" | head -n 1)
-          if [ -n "$HOOK_FILE" ]; then
-            echo "🔍 File ditemukan: $HOOK_FILE"
-            python3 -c '
-          import os
-          path = "'"$HOOK_FILE"'"
-          if os.path.exists(path):
-              with open(path, "r") as f:
-                  content = f.read()
-              if "syscall_fn_t" in content and "syscall_fn_t)" not in content:
-                  print("🔧 Menerapkan patch syscall_fn_t ke " + path)
-                  patch = "#include <linux/syscalls.h>\n#include <asm/syscall.h>\n#ifndef syscall_fn_t\nstruct pt_regs;\ntypedef long (*syscall_fn_t)(const struct pt_regs *);\n#endif\n"
-                  with open(path, "w") as f:
-                      f.write(patch + content)
-          '
-          fi
+echo "---------------------------------------"
+echo "🔧 Running KernelSU Legacy Patch Script"
+echo "---------------------------------------"
 
-          # 2. Patch linux/pgtable.h -> asm/pgtable.h
-          PGTABLE_HEADER=$(find . -maxdepth 4 -path "*/include/linux/pgtable.h" | head -n 1)
-          if [ -z "$PGTABLE_HEADER" ]; then
-            echo "🔧 Kernel legacy (4.14) terdeteksi..."
-            find . -path "*/drivers/kernelsu/*" -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|<linux/pgtable.h>|<asm/pgtable.h>|g' {} +
-          fi
+# 1. Patch syscall_hook.h untuk KernelSU-Next (dengan const pt_regs)
+HOOK_FILE=$(find . -name "syscall_hook.h" | grep "drivers/kernelsu" | head -n 1)
 
-          # 3. Patch LSM Hook
-          python3 -c '
-          import glob
-          lsm_files = glob.glob("**/drivers/kernelsu/hook/lsm_hook.c", recursive=True)
-          for path in lsm_files:
-              with open(path, "r") as f:
-                  content = f.read()
-              modified = False
-              if "hook->list.head = head;" in content:
-                  content = content.replace("hook->list.head = head;", "hook->list.head = (void *)head;")
-                  modified = True
-              if "hook->list.list.pprev = &head->first;" in content:
-                  content = content.replace(
-                      "hook->list.list.pprev = &head->first;",
-                      "((struct hlist_node *)&hook->list.list)->pprev = &head->first;"
-                  )
-                  modified = True
-              if "&hook->list.head->first" in content:
-                  content = content.replace(
-                      "&hook->list.head->first",
-                      "&((struct hlist_head *)hook->list.head)->first"
-                  )
-                  modified = True
-              if modified:
-                  print("🔧 Menerapkan patch LSM hook 4.14 pada: " + path)
-                  with open(path, "w") as f:
-                      f.write(content)
-          '
+if [ -n "$HOOK_FILE" ]; then
+  echo "🔍 File ditemukan: $HOOK_FILE"
+  HOOK_FILE="$HOOK_FILE" python3 << 'EOF'
+import os
+path = os.environ.get("HOOK_FILE", "")
+if path and os.path.exists(path):
+    with open(path, "r") as f:
+        content = f.read()
+    if "syscall_fn_t" in content and "syscall_fn_t)" not in content:
+        print("🔧 Menerapkan patch syscall_fn_t ke " + path)
+        patch = "#include <linux/syscalls.h>\n#include <asm/syscall.h>\n#ifndef syscall_fn_t\nstruct pt_regs;\ntypedef long (*syscall_fn_t)(const struct pt_regs *);\n#endif\n"
+        with open(path, "w") as f:
+            f.write(patch + content)
+EOF
+else
+  echo "⚠️ File syscall_hook.h tidak ditemukan!"
+fi
 
-          # 4. Patch patch_memory.c
-          python3 -c '
-          import glob
-          pm_files = glob.glob("**/drivers/kernelsu/hook/arm64/patch_memory.*", recursive=True)
-          for path in pm_files:
-              with open(path, "r") as f:
-                  content = f.read()
-              modified = False
-              if "__flush_icache_range" in content:
-                  content = content.replace("__flush_icache_range", "flush_icache_range")
-                  modified = True
-              if modified:
-                  print("🔧 Menerapkan patch flush_icache_range pada: " + path)
-                  with open(path, "w") as f:
-                      f.write(content)
-          '
+# 2. Patch linux/pgtable.h -> asm/pgtable.h untuk Kernel Legacy (4.14)
+PGTABLE_HEADER=$(find . -maxdepth 4 -path "*/include/linux/pgtable.h" | head -n 1)
+if [ -z "$PGTABLE_HEADER" ]; then
+  echo "🔧 Kernel legacy (4.14) terdeteksi, mengganti linux/pgtable.h ke asm/pgtable.h..."
+  find . -path "*/drivers/kernelsu/*" -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|<linux/pgtable.h>|<asm/pgtable.h>|g' {} +
+fi
 
-          # 5. Patch file_wrapper.c
-          python3 -c '
-          import glob, re
-          def wrap_function(code, func_name):
-              code = re.sub(r"static\s+[^{;]*?\b" + func_name + r"\b[^{;]*?;", f"/* disabled {func_name} decl */", code, flags=re.DOTALL)
-              pattern = r"static\s+[^{]*?\b" + func_name + r"\b[^{]*?\{"
-              match = re.search(pattern, code, re.DOTALL)
-              if not match:
-                  return code
-              start_pos = match.start()
-              brace_pos = match.end() - 1
-              depth = 1
-              cur = brace_pos + 1
-              while cur < len(code) and depth > 0:
-                  if code[cur] == "{":
-                      depth += 1
-                  elif code[cur] == "}":
-                      depth -= 1
-                  cur += 1
-              end_pos = cur
-              func_code = code[start_pos:end_pos]
-              wrapped = f"\n#if 0 /* Disabled {func_name} for kernel 4.14 */\n{func_code}\n#endif\n"
-              return code[:start_pos] + wrapped + code[end_pos:]
+# 3. Patch LSM Hook (lsm_hook.c) untuk Kernel Legacy (4.14)
+python3 << 'EOF'
+import glob
 
-          fw_files = glob.glob("**/drivers/kernelsu/infra/file_wrapper.c", recursive=True)
-          for path in fw_files:
-              with open(path, "r") as f:
-                  content = f.read()
+lsm_files = glob.glob("**/drivers/kernelsu/hook/lsm_hook.c", recursive=True)
+for path in lsm_files:
+    with open(path, "r") as f:
+        content = f.read()
+    
+    modified = False
+    if "hook->list.head = head;" in content:
+        content = content.replace("hook->list.head = head;", "hook->list.head = (void *)head;")
+        modified = True
+    if "hook->list.list.pprev = &head->first;" in content:
+        content = content.replace(
+            "hook->list.list.pprev = &head->first;",
+            "((struct hlist_node *)&hook->list.list)->pprev = &head->first;"
+        )
+        modified = True
+    if "&hook->list.head->first" in content:
+        content = content.replace(
+            "&hook->list.head->first",
+            "&((struct hlist_head *)hook->list.head)->first"
+        )
+        modified = True
+        
+    if modified:
+        print("🔧 Menerapkan patch LSM hook 4.14 pada: " + path)
+        with open(path, "w") as f:
+            f.write(content)
+EOF
 
-              header_patch = """#include <linux/version.h>
-          #include <linux/poll.h>
-          #include <linux/errno.h>
-          #ifndef __poll_t
-          typedef unsigned int __poll_t;
-          #endif
-          #ifndef REMAP_FILE_DEDUP
-          #define REMAP_FILE_DEDUP 0
-          #endif
-          """
-              content = header_patch + "\n" + content
+# 4. Patch patch_memory.c (__flush_icache_range -> flush_icache_range)
+python3 << 'EOF'
+import glob
 
-              for func in ["ksu_wrapper_iopoll", "ksu_wrapper_remap_file_range", "ksu_wrapper_fadvise"]:
-                  content = wrap_function(content, func)
+pm_files = glob.glob("**/drivers/kernelsu/hook/arm64/patch_memory.*", recursive=True)
+for path in pm_files:
+    with open(path, "r") as f:
+        content = f.read()
+    
+    modified = False
+    if "__flush_icache_range" in content:
+        content = content.replace("__flush_icache_range", "flush_icache_range")
+        modified = True
+        
+    if modified:
+        print("🔧 Menerapkan patch flush_icache_range pada: " + path)
+        with open(path, "w") as f:
+            f.write(content)
+EOF
 
-              content = re.sub(
-                  r"p->ops\.(iopoll|mmap_supported_flags|remap_file_range|fadvise)\s*=[^;]*?;",
-                  r"/* \g<0> */",
-                  content,
-                  flags=re.DOTALL
-              )
+# 5. Patch file_wrapper.c secara presisi untuk Kernel Legacy (4.14 VFS)
+python3 << 'EOF'
+import glob, re
 
-              print("🔧 Menerapkan patch VFS file_wrapper 4.14 pada: " + path)
-              with open(path, "w") as f:
-                  f.write(content)
-          '
+def wrap_function(code, func_name):
+    code = re.sub(r"static\s+[^{;]*?\b" + func_name + r"\b[^{;]*?;", f"/* disabled {func_name} decl */", code, flags=re.DOTALL)
+    pattern = r"static\s+[^{]*?\b" + func_name + r"\b[^{]*?\{"
+    match = re.search(pattern, code, re.DOTALL)
+    if not match:
+        return code
+    start_pos = match.start()
+    brace_pos = match.end() - 1
+    depth = 1
+    cur = brace_pos + 1
+    while cur < len(code) and depth > 0:
+        if code[cur] == "{":
+            depth += 1
+        elif code[cur] == "}":
+            depth -= 1
+        cur += 1
+    end_pos = cur
+    func_code = code[start_pos:end_pos]
+    wrapped = f"\n#if 0 /* Disabled {func_name} for kernel 4.14 */\n{func_code}\n#endif\n"
+    return code[:start_pos] + wrapped + code[end_pos:]
+
+fw_files = glob.glob("**/drivers/kernelsu/infra/file_wrapper.c", recursive=True)
+for path in fw_files:
+    with open(path, "r") as f:
+        content = f.read()
+
+    header_patch = """#include <linux/version.h>
+#include <linux/poll.h>
+#include <linux/errno.h>
+#ifndef __poll_t
+typedef unsigned int __poll_t;
+#endif
+#ifndef REMAP_FILE_DEDUP
+#define REMAP_FILE_DEDUP 0
+#endif
+"""
+    content = header_patch + "\n" + content
+
+    for func in ["ksu_wrapper_iopoll", "ksu_wrapper_remap_file_range", "ksu_wrapper_fadvise"]:
+        content = wrap_function(content, func)
+
+    content = re.sub(
+        r"p->ops\.(iopoll|mmap_supported_flags|remap_file_range|fadvise)\s*=[^;]*?;",
+        r"/* \g<0> */",
+        content,
+        flags=re.DOTALL
+    )
+
+    print("🔧 Menerapkan patch VFS file_wrapper 4.14 pada: " + path)
+    with open(path, "w") as f:
+        f.write(content)
+EOF
+
+# 6. Fallback patch iopoll untuk kernel < 5.12
+echo "🔧 Memastikan patch iopoll terpasang..."
+find . -path "*/drivers/kernelsu/infra/file_wrapper.c" -exec sed -i 's/return orig->f_op->iopoll/#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)\nreturn orig->f_op->iopoll\n#else\nreturn -EOPNOTSUPP;\n#endif/g' {} +
