@@ -49,6 +49,10 @@ EOF
 echo "🔧 Mengganti <uapi/linux/mount.h> -> <linux/mount.h>..."
 find . -path "*/drivers/kernelsu/*" -type f \( -name "*.h" -o -name "*.c" \) -exec sed -i 's|<uapi/linux/mount.h>|<linux/mount.h>|g' {} +
 
+# 0.2 Replace <linux/minmax.h> dengan <linux/kernel.h> untuk Kernel Legacy (< 5.12)
+echo "🔧 Mengganti <linux/minmax.h> -> <linux/kernel.h>..."
+find . -path "*/drivers/kernelsu/*" -type f \( -name "*.h" -o -name "*.c" \) -exec sed -i 's|<linux/minmax.h>|<linux/kernel.h>|g' {} +
+
 # 1. Patch syscall_hook.h untuk KernelSU-Next (dengan const pt_regs)
 HOOK_FILE=$(find . -name "syscall_hook.h" | grep "drivers/kernelsu" | head -n 1)
 
