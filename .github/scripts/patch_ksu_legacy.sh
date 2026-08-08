@@ -289,3 +289,29 @@ extern struct mutex ext_int_mutex;
     with open(path, "w") as f:
         f.write(content)
 EOF
+
+# 10. Patch sepolicy.c (Bungkus fungsi inkompatibel policydb 4.14 dengan #if 0)
+python3 << 'EOF'
+import glob
+
+sep_files = glob.glob("**/drivers/kernelsu/selinux/sepolicy.c", recursive=True)
+for path in sep_files:
+    with open(path, "r") as f:
+        content = f.read()
+
+    if "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)" not in content:
+        print("🔧 Menerapkan patch kompatibilitas sepolicy 4.14 pada: " + path)
+        
+        patch_code = """
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+// Dummy wrappers for legacy 4.14 kernels where 5.10+ policydb layout is not supported directly in-kernel
+bool ksu_sepolicy_init(void) { return true; }
+void ksu_sepolicy_exit(void) {}
+#else
+"""
+        content = patch_code + content + "\n#endif\n"
+        with open(path, "w") as f:
+            f.write(content)
+EOF
