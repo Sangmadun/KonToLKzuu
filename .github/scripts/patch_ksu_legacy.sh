@@ -5,7 +5,7 @@ echo "---------------------------------------"
 echo "🔧 Running KernelSU Legacy Patch Script"
 echo "---------------------------------------"
 
-# 1. Patch syscall_hook.h untuk KernelSU-Next
+# 1. Patch syscall_hook.h untuk KernelSU-Next (dengan const pt_regs)
 HOOK_FILE=$(find . -name "syscall_hook.h" | grep "drivers/kernelsu" | head -n 1)
 
 if [ -n "$HOOK_FILE" ]; then
@@ -18,7 +18,7 @@ if os.path.exists(path):
         content = f.read()
     if "syscall_fn_t" in content and "syscall_fn_t)" not in content:
         print("🔧 Menerapkan patch syscall_fn_t ke " + path)
-        patch = "#include <linux/syscalls.h>\n#include <asm/syscall.h>\n#ifndef syscall_fn_t\nstruct pt_regs;\ntypedef long (*syscall_fn_t)(struct pt_regs *);\n#endif\n"
+        patch = "#include <linux/syscalls.h>\n#include <asm/syscall.h>\n#ifndef syscall_fn_t\nstruct pt_regs;\ntypedef long (*syscall_fn_t)(const struct pt_regs *);\n#endif\n"
         with open(path, "w") as f:
             f.write(patch + content)
 '
