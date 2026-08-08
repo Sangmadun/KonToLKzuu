@@ -65,7 +65,7 @@ for path in lsm_files:
             f.write(content)
 '
 
-# 4. Patch patch_memory.c (__flush_icache_range -> flush_icache_range) untuk Kernel Legacy (4.14)
+# 4. Patch patch_memory.c (__flush_icache_range -> flush_icache_range)
 python3 -c '
 import glob
 
@@ -83,4 +83,41 @@ for path in pm_files:
         print("🔧 Menerapkan patch flush_icache_range pada: " + path)
         with open(path, "w") as f:
             f.write(content)
+'
+
+# 5. Patch file_wrapper.c untuk Kernel Legacy (4.14 VFS compatibility)
+python3 -c '
+import glob
+
+fw_files = glob.glob("**/drivers/kernelsu/infra/file_wrapper.c", recursive=True)
+for path in fw_files:
+    with open(path, "r") as f:
+        content = f.read()
+
+    patch_header = """#include <linux/poll.h>
+#include <linux/errno.h>
+#ifndef __poll_t
+typedef unsigned int __poll_t;
+#endif
+#ifndef REMAP_FILE_DEDUP
+#define REMAP_FILE_DEDUP 0
+#endif
+"""
+    lines = content.splitlines()
+    new_lines = []
+    
+    for line in lines:
+        if any(k in line for k in ["iopoll", "fadvise", "mmap_supported_flags", "remap_file_range"]):
+            if "return " in line:
+                new_lines.append("return -EOPNOTSUPP;")
+            elif "if (" in line or "if(" in line:
+                new_lines.append("if (0) {")
+            else:
+                new_lines.append("// " + line)
+        else:
+            new_lines.append(line)
+
+    print("🔧 Menerapkan patch VFS file_wrapper 4.14 pada: " + path)
+    with open(path, "w") as f:
+        f.write(patch_header + "\n".join(new_lines))
 '
