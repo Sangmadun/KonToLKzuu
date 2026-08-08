@@ -64,3 +64,23 @@ for path in lsm_files:
         with open(path, "w") as f:
             f.write(content)
 '
+
+# 4. Patch patch_memory.c (__flush_icache_range -> flush_icache_range) untuk Kernel Legacy (4.14)
+python3 -c '
+import glob
+
+pm_files = glob.glob("**/drivers/kernelsu/hook/arm64/patch_memory.*", recursive=True)
+for path in pm_files:
+    with open(path, "r") as f:
+        content = f.read()
+    
+    modified = False
+    if "__flush_icache_range" in content:
+        content = content.replace("__flush_icache_range", "flush_icache_range")
+        modified = True
+        
+    if modified:
+        print("🔧 Menerapkan patch flush_icache_range pada: " + path)
+        with open(path, "w") as f:
+            f.write(content)
+'
