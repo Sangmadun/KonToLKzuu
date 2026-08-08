@@ -5,9 +5,13 @@ echo "---------------------------------------"
 echo "🔧 Running KernelSU Legacy Patch Script"
 echo "---------------------------------------"
 
-# 0. Global Fix: Injeksi header, typedef __poll_t (dengan macro guard), & fallback SECCOMP
+# 0. Global Fix: Injeksi header, typedef __poll_t, & fallback SECCOMP
 echo "🔧 Menerapkan injeksi global __poll_t & SECCOMP_ARCH_NATIVE_NR..."
 find . -path "*/drivers/kernelsu/*" -type f \( -name "*.h" -o -name "*.c" \) -exec sed -i '1s|^|#include <linux/version.h>\n#include <linux/types.h>\n#include <linux/poll.h>\n#include <linux/seccomp.h>\n#include <asm/unistd.h>\n#ifndef __poll_t\ntypedef unsigned int __poll_t;\n#define __poll_t __poll_t\n#endif\n#ifndef SECCOMP_ARCH_NATIVE_NR\n#ifdef NR_syscalls\n#define SECCOMP_ARCH_NATIVE_NR NR_syscalls\n#elif defined(__NR_syscalls)\n#define SECCOMP_ARCH_NATIVE_NR __NR_syscalls\n#else\n#define SECCOMP_ARCH_NATIVE_NR 500\n#endif\n#endif\n|' {} +
+
+# 0.1 Replace <uapi/linux/mount.h> dengan <linux/mount.h> untuk Kernel Legacy
+echo "🔧 Mengganti <uapi/linux/mount.h> -> <linux/mount.h>..."
+find . -path "*/drivers/kernelsu/*" -type f \( -name "*.h" -o -name "*.c" \) -exec sed -i 's|<uapi/linux/mount.h>|<linux/mount.h>|g' {} +
 
 # 1. Patch syscall_hook.h untuk KernelSU-Next (dengan const pt_regs)
 HOOK_FILE=$(find . -name "syscall_hook.h" | grep "drivers/kernelsu" | head -n 1)
