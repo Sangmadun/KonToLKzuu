@@ -5,6 +5,10 @@ echo "---------------------------------------"
 echo "🔧 Running KernelSU Legacy Patch Script"
 echo "---------------------------------------"
 
+# 0. Global Fix: Injeksi header & typedef __poll_t untuk Kernel < 4.19
+echo "🔧 Menerapkan injeksi global __poll_t..."
+find . -path "*/drivers/kernelsu/*" -type f \( -name "*.h" -o -name "*.c" \) -exec sed -i '1s|^|#include <linux/version.h>\n#include <linux/types.h>\n#include <linux/poll.h>\n#ifndef __poll_t\ntypedef unsigned int __poll_t;\n#endif\n|' {} +
+
 # 1. Patch syscall_hook.h untuk KernelSU-Next (dengan const pt_regs)
 HOOK_FILE=$(find . -name "syscall_hook.h" | grep "drivers/kernelsu" | head -n 1)
 
@@ -118,9 +122,6 @@ for path in fw_files:
     header_patch = """#include <linux/version.h>
 #include <linux/poll.h>
 #include <linux/errno.h>
-#ifndef __poll_t
-typedef unsigned int __poll_t;
-#endif
 #ifndef REMAP_FILE_DEDUP
 #define REMAP_FILE_DEDUP 0
 #endif
@@ -142,6 +143,6 @@ typedef unsigned int __poll_t;
         f.write(content)
 EOF
 
-# 6. Fallback patch iopoll untuk kernel < 5.12
-echo "🔧 Memastikan patch iopoll terpasang..."
-find . -path "*/drivers/kernelsu/infra/file_wrapper.c" -exec sed -i 's/return orig->f_op->iopoll/#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)\nreturn orig->f_op->iopoll\n#else\nreturn -EOPNOTSUPP;\n#endif/g' {} +
+# 6. Fallback patch iopoll presisi (menghapus seluruh baris panggilan iopoll)
+echo "🔧 Memastikan patch iopoll terpasang dengan rapi..."
+find . -path "*/drivers/kernelsu/infra/file_wrapper.c" -exec sed -i 's/return orig->f_op->iopoll.*/#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)\nreturn orig->f_op->iopoll(kiocb, spin);\n#else\nreturn -EOPNOTSUPP;\n#endif/g' {} +
