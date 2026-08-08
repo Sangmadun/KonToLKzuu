@@ -251,7 +251,7 @@ for path in ap_files:
             f.write(content)
 EOF
 
-# 9. Patch SELinux rules.c & sepolicy untuk Kernel < 5.10 (4.14 compatibility)
+# 9. Patch SELinux rules.c & sepolicy presisi untuk Kernel < 5.10 (4.14)
 python3 << 'EOF'
 import glob, re
 
@@ -265,8 +265,8 @@ for path in selinux_files:
 #ifndef selinux_policy
 #define selinux_policy selinux_ss
 #endif
-#ifndef policy_mutex
-#define policy_mutex ss->policy_mutex
+#ifndef ext_int_mutex
+extern struct mutex ext_int_mutex;
 #endif
 #endif
 """
@@ -276,6 +276,12 @@ for path in selinux_files:
     content = re.sub(
         r"\bselinux_state\.policy\b",
         "selinux_state.ss",
+        content
+    )
+
+    content = re.sub(
+        r"selinux_state\.policy_mutex",
+        "ext_int_mutex",
         content
     )
 
