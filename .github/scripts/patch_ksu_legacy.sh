@@ -151,18 +151,20 @@ EOF
 echo "🔧 Memastikan patch iopoll terpasang dengan rapi..."
 find . -path "*/drivers/kernelsu/infra/file_wrapper.c" -exec sed -i 's/return orig->f_op->iopoll.*/#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)\nreturn orig->f_op->iopoll(kiocb, spin);\n#else\nreturn -EOPNOTSUPP;\n#endif/g' {} +
 
-# 7. Patch pkg_observer.c (fsnotify_ops -> handle_event dengan forward declaration)
+# 7. Patch pkg_observer.c secara terpresisi menggunakan Regex
 python3 << 'EOF'
-import glob
+import glob, re
 
 po_files = glob.glob("**/drivers/kernelsu/manager/pkg_observer.c", recursive=True)
 for path in po_files:
     with open(path, "r") as f:
         content = f.read()
 
-    if ".handle_inode_event" in content and "ksu_handle_event" not in content:
+    if ".handle_inode_event" in content or ".handle_event" in content:
         print("🔧 Menerapkan patch fsnotify_ops pkg_observer 4.14 pada: " + path)
-        wrapper = """
+        
+        if "ksu_handle_event" not in content:
+            wrapper = """
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
 static int ksu_handle_inode_event(struct fsnotify_mark *mark, u32 mask,
                                   struct inode *inode, struct inode *dir,
@@ -182,11 +184,15 @@ static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
 }
 #endif
 """
-        content = content.replace("static struct fsnotify_ops", wrapper + "\nstatic struct fsnotify_ops")
-        content = content.replace(
-            ".handle_inode_event = ksu_handle_inode_event,",
-            """#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)\n    .handle_event = ksu_handle_event,\n#else\n    .handle_inode_event = ksu_handle_inode_event,\n#endif"""
-        )
+            content = re.sub(r"(static\s+(?:const\s+)?struct\s+fsnotify_ops)", wrapper + r"\n\1", content, count=1)
+
+        if "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)" not in content:
+            content = re.sub(
+                r"\.handle_(?:inode_)?event\s*=\s*ksu_handle_(?:inode_)?event\s*,?",
+                """#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)\n    .handle_event = ksu_handle_event,\n#else\n    .handle_inode_event = ksu_handle_inode_event,\n#endif""",
+                content
+            )
+
         with open(path, "w") as f:
             f.write(content)
 EOF
