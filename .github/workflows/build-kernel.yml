@@ -1,4 +1,4 @@
-Name: Build Kernel & Manager Worker
+name: Build Kernel & Manager Worker
 
 on:
   workflow_call:
