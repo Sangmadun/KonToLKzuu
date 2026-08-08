@@ -33,25 +33,34 @@ if [ -z "$PGTABLE_HEADER" ]; then
   find . -path "*/drivers/kernelsu/*" -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|<linux/pgtable.h>|<asm/pgtable.h>|g' {} +
 fi
 
-# 3. Patch LSM Hook (list_head -> hlist) untuk Kernel Legacy (4.14)
+# 3. Patch LSM Hook (lsm_hook.c) untuk Kernel Legacy (4.14)
 python3 -c '
 import glob
 
-files = glob.glob("**/drivers/kernelsu/hook/lsm_hook.*", recursive=True)
-for path in files:
+lsm_files = glob.glob("**/drivers/kernelsu/hook/lsm_hook.c", recursive=True)
+for path in lsm_files:
     with open(path, "r") as f:
         content = f.read()
     
     modified = False
-    if "struct list_head list;" in content:
-        content = content.replace("struct list_head list;", "struct hlist_node list;")
+    if "hook->list.head = head;" in content:
+        content = content.replace("hook->list.head = head;", "hook->list.head = (void *)head;")
         modified = True
-    if "struct list_head *head;" in content:
-        content = content.replace("struct list_head *head;", "struct hlist_head *head;")
+    if "hook->list.list.pprev = &head->first;" in content:
+        content = content.replace(
+            "hook->list.list.pprev = &head->first;",
+            "((struct hlist_node *)&hook->list.list)->pprev = &head->first;"
+        )
         modified = True
-    
+    if "&hook->list.head->first" in content:
+        content = content.replace(
+            "&hook->list.head->first",
+            "&((struct hlist_head *)hook->list.head)->first"
+        )
+        modified = True
+        
     if modified:
-        print("🔧 Menerapkan patch LSM hook legacy pada: " + path)
+        print("🔧 Menerapkan patch LSM hook 4.14 pada: " + path)
         with open(path, "w") as f:
             f.write(content)
 '
