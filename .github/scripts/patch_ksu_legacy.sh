@@ -2,16 +2,20 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script (Final Linker Fix)"
+echo "🔧 Running KernelSU Legacy Patch Script (Final Redefinition Fix)"
 echo "---------------------------------------"
 
 python3 << 'EOF'
 import os, glob, re
 
 # ---------------------------------------------------------------------------
-# Header Kompatibilitas Global 
+# Header Kompatibilitas Global dengan Include Guards
 # ---------------------------------------------------------------------------
-COMPAT_HEADERS = """#include <linux/version.h>
+COMPAT_HEADERS = """
+#ifndef KSU_COMPAT_HEADERS_H
+#define KSU_COMPAT_HEADERS_H
+
+#include <linux/version.h>
 #include <linux/types.h>
 #include <linux/poll.h>
 #include <linux/seccomp.h>
@@ -22,6 +26,7 @@ COMPAT_HEADERS = """#include <linux/version.h>
 #include <asm/unistd.h>
 #include <linux/uaccess.h>
 #include <linux/fs.h>
+#include <linux/syscalls.h>
 
 #ifndef __poll_t
 typedef unsigned int __poll_t;
@@ -86,7 +91,18 @@ typedef unsigned int __poll_t;
 #ifndef seccomp_filter_release
 #define seccomp_filter_release(task) do {} while (0)
 #endif
-#endif
+
+/* Inject path_umount & setns stubs securely */
+asmlinkage long sys_umount(char __user *name, int flags);
+static inline int ksu_path_umount_compat(struct path *path, int flags) {
+    return sys_umount((char __user *)path->dentry->d_name.name, flags);
+}
+static inline long ksu_sys_setns(int fd, int nstype) {
+    return sys_setns(fd, nstype);
+}
+#endif /* Kernel < 5.10 */
+
+#endif /* KSU_COMPAT_HEADERS_H */
 /* KSU_COMPAT_MARKER */
 """
 
@@ -170,7 +186,6 @@ def apply_file_specific_patch(path, content):
 
     if "app_profile.c" in name:
         content = re.sub(r"([^\n]*seccomp\.filter_count[^\n]*)", r"// \1", content)
-        # Hapus deklarasi agar makro dari header bisa bekerja
         content = re.sub(
             r"(void\s+seccomp_filter_release\s*\([^)]*\)\s*;)",
             r"/* \1 */",
@@ -229,25 +244,15 @@ void ksu_selinux_hide_handle_second_stage(void) {}
 """
         content = wrap_file_with_stubs(content, stub)
 
+    if "selinux" in name or "rules.c" in name:
+        content = patch_selinux_state_refs(content)
+
     if name in ("apk_sign.c", "apk_sign.h", "manager.c"):
         content = patch_manager_allowlist(content)
 
     return content
 
 def patch_su_mount_ns(content):
-    patch_setns = """
-#include <linux/version.h>
-#include <linux/syscalls.h>
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-static inline long ksu_sys_setns(int fd, int nstype) {
-    return sys_setns(fd, nstype);
-}
-#endif
-"""
-    if "ksu_sys_setns" not in content:
-        content = patch_setns + "\n" + content
-
     content = re.sub(
         r"extern\s+long\s+__arm64_sys_setns\s*\([^)]*\)\s*;",
         "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\nextern long __arm64_sys_setns(const struct pt_regs *regs);\n#endif",
@@ -300,18 +305,28 @@ static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
 def patch_mount_umount_compat(content):
     content = re.sub(r"\bpath_mount\b", "do_mount", content)
     content = re.sub(r"\bpath_umount\b", "ksu_path_umount_compat", content)
-    
-    if "ksu_path_umount_compat" not in content:
-        content = (
-            "\n#include <linux/version.h>\n"
-            "#include <linux/fs.h>\n"
-            "#include <linux/syscalls.h>\n"
-            "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n"
-            "asmlinkage long sys_umount(char __user *name, int flags);\n"
-            "static inline int ksu_path_umount_compat(struct path *path, int flags) {\n"
-            "    return sys_umount((char __user *)path->dentry->d_name.name, flags);\n"
-            "}\n#endif\n"
-        ) + content
+    return content
+
+def patch_selinux_state_refs(content):
+    header_patch = """
+#include <linux/version.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#ifndef selinux_policy
+#define selinux_policy selinux_ss
+#endif
+#ifndef ext_int_mutex
+extern struct mutex ext_int_mutex;
+#endif
+#ifndef selinux_cred
+#define selinux_cred(cred) ((struct task_security_struct *)(cred)->security)
+#endif
+#endif
+"""
+    if "#ifndef selinux_policy" not in content:
+        content = header_patch + "\n" + content
+
+    content = re.sub(r"\bselinux_state\.policy\b", "selinux_state.ss", content)
+    content = re.sub(r"\bselinux_state\.policy_mutex\b", "ext_int_mutex", content)
     return content
 
 def patch_manager_allowlist(content):
@@ -395,5 +410,5 @@ def patch_file_wrapper():
 
 patch_kernel_su_sources()
 patch_file_wrapper()
-print("✅ Patch KernelSU Legacy (Full Linker Fix) selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy (Redefinition Fix) selesai dilaksanakan!")
 EOF
