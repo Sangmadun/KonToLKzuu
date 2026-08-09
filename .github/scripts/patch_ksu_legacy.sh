@@ -248,8 +248,11 @@ def patch_mount_umount_compat(content):
     content = re.sub(r"\bpath_umount\b", "ksu_path_umount_compat", content)
     if "ksu_path_umount_compat" not in content:
         content = (
-            "\n#include <linux/version.h>\n"          # <-- tambahan: include mandiri
+            "\n#include <linux/version.h>\n"
+            "#include <linux/fs.h>\n"          # <-- lengkap: struct path, dentry
+            "#include <linux/syscalls.h>\n"    # <-- lengkap: prototype resmi sys_umount
             "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n"
+            "asmlinkage long sys_umount(char __user *name, int flags);\n"  # <-- match prototype asli
             "static inline int ksu_path_umount_compat(struct path *path, int flags) {\n"
             "    return sys_umount((char __user *)path->dentry->d_name.name, flags);\n"
             "}\n#endif\n"
