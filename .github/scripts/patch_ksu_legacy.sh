@@ -2,14 +2,14 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script (Linker & SELinux Engine Fix)"
+echo "🔧 Running KernelSU Legacy Patch Script (Fix su_mount_ns & setns)"
 echo "---------------------------------------"
 
 python3 << 'EOF'
 import os, glob, re
 
 # ---------------------------------------------------------------------------
-# Header Kompatibilitas Global
+# Header Kompatibilitas Global (Tanpa Macro Function Konflik)
 # ---------------------------------------------------------------------------
 COMPAT_HEADERS = """#include <linux/version.h>
 #include <linux/types.h>
@@ -82,9 +82,6 @@ typedef unsigned int __poll_t;
 #endif
 #ifndef fsnotify_add_inode_mark
 #define fsnotify_add_inode_mark(mark, inode, allow_dups) fsnotify_add_mark(mark, inode, NULL, allow_dups)
-#endif
-#ifndef __arm64_sys_setns
-#define __arm64_sys_setns(regs) sys_setns((regs)->regs[0], (regs)->regs[1])
 #endif
 #endif
 """
@@ -165,6 +162,9 @@ def apply_file_specific_patch(path, content):
     if "selinux" in name or "rules.c" in name:
         content = patch_selinux_state_refs(content)
 
+    if "su_mount_ns.c" in name:
+        content = patch_su_mount_ns(content)
+
     # Patch selinux_hide.c untuk Stub Legacy
     if "selinux_hide.c" in name and "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)" not in content:
         stub = """
@@ -185,6 +185,33 @@ void ksu_selinux_hide_handle_second_stage(void) {}
     if name in ("apk_sign.c", "apk_sign.h", "manager.c"):
         content = patch_manager_allowlist(content)
 
+    return content
+
+def patch_su_mount_ns(content):
+    # Bungkus deklarasi __arm64_sys_setns dan pemanggilannya untuk Kernel < 5.10
+    patch_setns = """
+#include <linux/version.h>
+#include <linux/syscalls.h>
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+static inline long ksu_sys_setns(int fd, int nstype) {
+    return sys_setns(fd, nstype);
+}
+#endif
+"""
+    if "ksu_sys_setns" not in content:
+        content = patch_setns + "\n" + content
+
+    content = re.sub(
+        r"extern\s+long\s+__arm64_sys_setns\s*\([^)]*\)\s*;",
+        "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\nextern long __arm64_sys_setns(const struct pt_regs *regs);\n#endif",
+        content
+    )
+    content = re.sub(
+        r"return\s+__arm64_sys_setns\s*\(&regs\)\s*;",
+        "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n    return ksu_sys_setns((int)fd, (int)flags);\n#else\n    return __arm64_sys_setns(&regs);\n#endif",
+        content
+    )
     return content
 
 def patch_pkg_observer(content):
@@ -225,7 +252,6 @@ static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
     return content
 
 def patch_selinux_state_refs(content):
-    # Penanganan struktur SELinux & selinux_cred untuk Kernel < 5.10
     header_patch = """
 #include <linux/version.h>
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
@@ -248,7 +274,6 @@ extern struct mutex ext_int_mutex;
     return content
 
 def patch_mount_umount_compat(content):
-    # Penggantian path_mount / path_umount ke fungsi legacy
     content = re.sub(r"\bpath_mount\b", "do_mount", content)
     content = re.sub(r"\bpath_umount\b", "ksu_path_umount_compat", content)
     
@@ -346,5 +371,5 @@ def patch_file_wrapper():
 
 patch_kernel_su_sources()
 patch_file_wrapper()
-print("✅ Patch KernelSU Legacy, Linker Fix, & Multi-Manager selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy & su_mount_ns selesai dilaksanakan!")
 EOF
