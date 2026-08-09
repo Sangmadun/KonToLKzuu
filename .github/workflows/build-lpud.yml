@@ -35,36 +35,65 @@ permissions:
 
 jobs:
   build-lpud:
-    if: inputs.ksu_fork == 'xxKSU' || inputs.ksu_fork == 'SUKISU' || inputs.ksu_fork == 'ReSuKISU'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    env:
+      TARGET_ARCH: ${{ inputs.target_arch || 'aarch64-linux-android' }}
+
     steps:
+      - name: Validate KSU Fork Input
+        run: |
+          case "${{ inputs.ksu_fork }}" in
+            xxKSU|SUKISU|ReSuKISU) ;;
+            *)
+              echo "::error::ksu_fork tidak dikenali: '${{ inputs.ksu_fork }}'. Harus salah satu dari: xxKSU, SUKISU, ReSuKISU"
+              exit 1
+              ;;
+          esac
+
       - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ inputs.target_arch || 'aarch64-linux-android' }}
+          targets: ${{ env.TARGET_ARCH }}
+
+      - name: Cache Cargo Registry & cross Binary
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/bin/cross
+          key: cargo-cross-${{ runner.os }}-66845c1
 
       - name: Clone KSU Userspace Source
         run: |
           rm -rf ksu-src
-          if [ "${{ inputs.ksu_fork }}" = "xxKSU" ]; then
-            echo "Cloning xxKSU Userspace..."
-            git clone --depth=1 https://github.com/backslashxx/KernelSU.git ksu-src
-          elif [ "${{ inputs.ksu_fork }}" = "ReSuKISU" ]; then
-            echo "Cloning ReSuKISU Userspace..."
-            git clone --depth=1 https://github.com/rsuntk/ReSuKISU.git ksu-src
-          else
-            echo "Cloning SUKISU Userspace..."
-            git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git ksu-src
-          fi
+
+          case "${{ inputs.ksu_fork }}" in
+            xxKSU)
+              REPO_URL="https://github.com/backslashxx/KernelSU.git"
+              ;;
+            ReSuKISU)
+              REPO_URL="https://github.com/rsuntk/ReSuKISU.git"
+              ;;
+            SUKISU)
+              REPO_URL="https://github.com/SukiSU-Ultra/SukiSU-Ultra.git"
+              ;;
+          esac
+
+          echo "Cloning ${{ inputs.ksu_fork }} Userspace from $REPO_URL ..."
+          git clone --depth=1 "$REPO_URL" ksu-src
 
       - name: Setup Cross Compiler
         run: |
-          cargo install cross --git https://github.com/cross-rs/cross --rev 66845c1 --force
+          if ! command -v cross >/dev/null 2>&1; then
+            cargo install cross --git https://github.com/cross-rs/cross --rev 66845c1 --force
+          else
+            echo "cross sudah tersedia dari cache, skip install."
+          fi
 
       - name: Build lpud / ksud
         run: |
@@ -78,37 +107,35 @@ jobs:
             CARGO_PATH=$(find userspace -name "Cargo.toml" 2>/dev/null | head -n 1)
           fi
 
-          if [ -n "$CARGO_PATH" ]; then
-            echo "Menemukan project Rust di lokasi: $CARGO_PATH"
-            
-            TARGET_ARCH="${{ inputs.target_arch || 'aarch64-linux-android' }}"
-            
-            CROSS_NO_WARNINGS=0 cross build --target "$TARGET_ARCH" --release --manifest-path "$CARGO_PATH"
-
-            mkdir -p ../output_lpud
-
-            # Cari binary hasil kompilasi (lpud atau ksud)
-            BINARY_FILE=$(find "target/$TARGET_ARCH/release/" -maxdepth 1 -type f \( -name "lpud*" -o -name "ksud*" \) ! -name "*.d" | head -n 1)
-
-            if [ -n "$BINARY_FILE" ]; then
-              echo "Berhasil mem-build: $BINARY_FILE"
-              cp "$BINARY_FILE" ../output_lpud/lpud-aarch64
-            else
-              echo "Error: Binary hasil kompilasi tidak ditemukan di folder target!"
-              exit 1
-            fi
-          else
-            echo "Error: File Cargo.toml untuk lpud/ksud tidak ditemukan!"
+          if [ -z "$CARGO_PATH" ]; then
+            echo "::error::Cargo.toml untuk lpud/ksud tidak ditemukan di fork '${{ inputs.ksu_fork }}'!"
             echo "Isi struktur repositori:"
             ls -la
             exit 1
           fi
 
+          echo "Menemukan project Rust di lokasi: $CARGO_PATH"
+
+          CROSS_NO_WARNINGS=0 cross build --target "$TARGET_ARCH" --release --manifest-path "$CARGO_PATH"
+
+          mkdir -p ../output_lpud
+
+          # Cari binary hasil kompilasi (lpud atau ksud)
+          BINARY_FILE=$(find "target/$TARGET_ARCH/release/" -maxdepth 1 -type f \( -name "lpud*" -o -name "ksud*" \) ! -name "*.d" | head -n 1)
+
+          if [ -z "$BINARY_FILE" ]; then
+            echo "::error::Binary hasil kompilasi tidak ditemukan di folder target!"
+            exit 1
+          fi
+
+          echo "Berhasil mem-build: $BINARY_FILE"
+          cp "$BINARY_FILE" "../output_lpud/lpud-${TARGET_ARCH}"
+
       - name: Upload lpud Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lpud-${{ inputs.ksu_fork }}-${{ inputs.target_arch || 'aarch64-linux-android' }}
-          path: output_lpud/lpud-aarch64
+          name: lpud-${{ inputs.ksu_fork }}-${{ env.TARGET_ARCH }}
+          path: output_lpud/lpud-${{ env.TARGET_ARCH }}
 
       - name: Publish to GitHub Release (Manual Execution)
         if: github.event_name == 'workflow_dispatch'
@@ -119,11 +146,10 @@ jobs:
           body: |
             ### 🛠️ lpud Binary Release
             - **KSU Fork**: `${{ inputs.ksu_fork }}`
-            - **Architecture**: `${{ inputs.target_arch || 'aarch64-linux-android' }}`
+            - **Architecture**: `${{ env.TARGET_ARCH }}`
           files: |
-            output_lpud/lpud-aarch64
+            output_lpud/lpud-${{ env.TARGET_ARCH }}
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
