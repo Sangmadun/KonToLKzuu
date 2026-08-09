@@ -50,12 +50,31 @@ chmod +x gradlew
 echo "🏗️ Starting Gradle Build for Manager APK..."
 ./gradlew assembleRelease --no-daemon
 
-# 3. Pindahkan hasil APK
+# 3. Pindahkan KHUSUS APK arm64-v8a atau universal
 mkdir -p "$GITHUB_WORKSPACE/output_apk"
-find app/build/outputs/apk/release/ . -type f -name "*.apk" -exec cp {} "$GITHUB_WORKSPACE/output_apk/" \; 2>/dev/null || true
 
-if [ -z "$(ls -A "$GITHUB_WORKSPACE/output_apk"/*.apk 2>/dev/null)" ]; then
-  echo "❌ Error: APK file not found after Gradle build!"
+APK_DIR="app/build/outputs/apk/release"
+FOUND_APK=""
+
+# Prioritas 1: APK Universal
+if ls ${APK_DIR}/*universal*.apk 1>/dev/null 2>&1; then
+  FOUND_APK=$(ls ${APK_DIR}/*universal*.apk | head -n 1)
+  echo "✅ Found Universal APK: ${FOUND_APK}"
+# Prioritas 2: APK khusus ARM64
+elif ls ${APK_DIR}/*arm64-v8a*.apk 1>/dev/null 2>&1; then
+  FOUND_APK=$(ls ${APK_DIR}/*arm64-v8a*.apk | head -n 1)
+  echo "✅ Found ARM64-v8a APK: ${FOUND_APK}"
+# Fallback: Ambil APK rilis apapun selain armeabi/x86 jika split tidak aktif
+else
+  FOUND_APK=$(find ${APK_DIR} -type f -name "*.apk" ! -name "*armeabi*" ! -name "*x86*" | head -n 1)
+fi
+
+if [ -n "$FOUND_APK" ] && [ -f "$FOUND_APK" ]; then
+  FINAL_NAME="${FORK}-Manager-arm64.apk"
+  cp "$FOUND_APK" "$GITHUB_WORKSPACE/output_apk/${FINAL_NAME}"
+  echo "📦 Successfully copied and renamed to: output_apk/${FINAL_NAME}"
+else
+  echo "❌ Error: No valid ARM64 or Universal APK found after Gradle build!"
   exit 1
 fi
 
