@@ -157,6 +157,7 @@ def apply_file_specific_patch(path, content):
         )
         # Fix untuk __compiletime_assert saat assign hook (Pointer Mismatch pada Kernel 4.14)
         compat_rcu = """
+#include <linux/version.h>
 #ifndef ksu_rcu_assign_pointer
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
 #define ksu_rcu_assign_pointer(p, v) WRITE_ONCE(p, v)
