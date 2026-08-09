@@ -233,6 +233,23 @@ void ksu_selinux_hide_handle_second_stage(void) {}
     if name in ("apk_sign.c", "apk_sign.h", "manager.c"):
         content = patch_manager_allowlist(content)
 
+    # New: patch for arm64 patch_memory icache compatibility
+    if "patch_memory.c" in name and "KSU_ICACHE_COMPAT" not in content:
+        icache_compat = """
+/* KSU_ICACHE_COMPAT */
+#include <linux/version.h>
+#include <asm/cacheflush.h>
+
+#ifndef __flush_icache_range
+#define __flush_icache_range flush_icache_range
+#endif
+
+#ifndef ksu_flush_icache
+#define ksu_flush_icache(start, end) __flush_icache_range((start), (end))
+#endif
+"""
+        content = icache_compat + content
+
     return content
 
 def patch_su_mount_ns(content):
