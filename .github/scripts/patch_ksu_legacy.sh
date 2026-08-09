@@ -97,15 +97,12 @@ ALLOWED_MANAGER_HASHES = [
     "3504179373d5778a486129a25b29b35a72064c0234a742f360e65383f98246cb",  # Next
 ]
 
-
 def guarded_stub(guard_lt, before):
-    """#if LINUX_VERSION_CODE < guard_lt ... #else <original content follows> #endif"""
     pre = (
         f"#include <linux/version.h>\n#include <linux/types.h>\n\n"
         f"#if LINUX_VERSION_CODE < KERNEL_VERSION({guard_lt})\n{before}\n#else\n"
     )
     return pre, "\n#endif\n"
-
 
 # ---------------------------------------------------------------------------
 # Main pass over drivers/kernelsu/**/*.[ch]
@@ -114,6 +111,7 @@ def patch_kernel_su_sources():
     for path in glob.glob("**/drivers/kernelsu/**/*.[ch]", recursive=True):
         with open(path) as f:
             content = f.read()
+
         original = content
 
         if "#ifndef __poll_t" not in content:
@@ -121,6 +119,7 @@ def patch_kernel_su_sources():
 
         for old, new in SIMPLE_REPLACEMENTS:
             content = content.replace(old, new)
+
         if not os.path.exists("include/linux/pgtable.h"):
             content = content.replace("<linux/pgtable.h>", "<asm/pgtable.h>")
 
@@ -129,7 +128,6 @@ def patch_kernel_su_sources():
         if content != original:
             with open(path, "w") as f:
                 f.write(content)
-
 
 def apply_file_specific_patch(path, content):
     name = os.path.basename(path)
@@ -148,7 +146,8 @@ def apply_file_specific_patch(path, content):
             "((struct hlist_node *)&hook->list.list)->pprev = &head->first;",
         )
         content = content.replace(
-            "&hook->list.head->first", "&((struct hlist_head *)hook->list.head)->first"
+            "&hook->list.head->first",
+            "&((struct hlist_head *)hook->list.head)->first"
         )
 
     if "patch_memory" in name:
@@ -190,7 +189,6 @@ def apply_file_specific_patch(path, content):
 
     return content
 
-
 def patch_pkg_observer(content):
     wrapper = """
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
@@ -214,7 +212,8 @@ static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
 """
     if "static int ksu_handle_event" not in content:
         content = re.sub(
-            r"(static\s+(?:const\s+)?struct\s+fsnotify_ops)", wrapper + r"\n\1", content, count=1
+            r"(static\s+(?:const\s+)?struct\s+fsnotify_ops)",
+            wrapper + r"\n\1", content, count=1
         )
     content = re.sub(
         r"\.handle_inode_event\s*=\s*ksu_handle_inode_event\s*,?",
@@ -226,7 +225,6 @@ static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
         content,
     )
     return content
-
 
 def patch_selinux_state_refs(content):
     if "#ifndef selinux_policy" not in content:
@@ -241,28 +239,26 @@ def patch_selinux_state_refs(content):
     content = re.sub(r"selinux_state\.policy_mutex", "ext_int_mutex", content)
     return content
 
-
 def patch_mount_umount_compat(content):
-    """path_mount/path_umount -> do_mount/compat wrapper for kernels < 5.10."""
     content = re.sub(r"\bpath_mount\b", "do_mount", content)
     content = re.sub(r"\bpath_umount\b", "ksu_path_umount_compat", content)
     if "ksu_path_umount_compat" not in content:
         content = (
             "\n#include <linux/version.h>\n"
-            "#include <linux/fs.h>\n"          # <-- lengkap: struct path, dentry
-            "#include <linux/syscalls.h>\n"    # <-- lengkap: prototype resmi sys_umount
+            "#include <linux/fs.h>\n"
+            "#include <linux/syscalls.h>\n"
             "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n"
-            "asmlinkage long sys_umount(char __user *name, int flags);\n"  # <-- match prototype asli
+            "asmlinkage long sys_umount(char __user *name, int flags);\n"
             "static inline int ksu_path_umount_compat(struct path *path, int flags) {\n"
             "    return sys_umount((char __user *)path->dentry->d_name.name, flags);\n"
             "}\n#endif\n"
         ) + content
     return content
 
-
 def patch_manager_allowlist(content):
     if "ksu_is_manager_apk" not in content or "MULTI_MANAGER_PATCHED" in content:
         return content
+
     hash_list = ",\n    ".join(f'"{h}"' for h in ALLOWED_MANAGER_HASHES)
     replacement = f"""
 /* MULTI_MANAGER_PATCHED */
@@ -279,8 +275,12 @@ bool ksu_is_manager_apk(const char *hash) {{
     return false;
 }}
 """
-    return re.sub(r"bool\s+ksu_is_manager_apk\s*\([^)]*\)\s*\{[^}]*\}", replacement, content)
-
+    # Replace entire ksu_is_manager_apk function body matching up to the closing brace
+    return re.sub(
+        r"bool\s+ksu_is_manager_apk\s*\([^)]*\)\s*\{[\s\S]*?\n\}",
+        replacement.strip(),
+        content
+    )
 
 # ---------------------------------------------------------------------------
 # file_wrapper.c: disable unsupported VFS ops (iopoll/remap/fadvise) + selinux_inode
@@ -296,7 +296,12 @@ def patch_file_wrapper():
                 "#ifndef REMAP_FILE_DEDUP\n#define REMAP_FILE_DEDUP 0\n#endif\n"
             ) + code
 
-        code = re.sub(r"\bselinux_inode\b", "/* selinux_inode */", code)
+        # Correct replacement for SELinux inode security struct in Kernel 4.14
+        code = re.sub(
+            r"selinux_inode\(([^)]+)\)",
+            r"((struct inode_security_struct *)(\1)->i_security)",
+            code
+        )
 
         for func in ("ksu_wrapper_iopoll", "ksu_wrapper_remap_file_range", "ksu_wrapper_fadvise"):
             code = re.sub(
@@ -330,7 +335,6 @@ def patch_file_wrapper():
 
         with open(path, "w") as f:
             f.write(code)
-
 
 patch_kernel_su_sources()
 patch_file_wrapper()
