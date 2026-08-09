@@ -2,14 +2,14 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script (Final Linker Assembly Fix)"
+echo "🔧 Running KernelSU Legacy Patch Script (Final Linker & RCU Fix)"
 echo "---------------------------------------"
 
 python3 << 'EOF'
 import os, glob, re
 
 # ---------------------------------------------------------------------------
-# Header Kompatibilitas Global dengan Include Guards
+# Header Kompatibilitas Global 
 # ---------------------------------------------------------------------------
 COMPAT_HEADERS = """
 #ifndef KSU_COMPAT_HEADERS_H
@@ -202,28 +202,22 @@ def apply_file_specific_patch(path, content):
         content = content.replace("__pte_to_phys", "pte_pfn")
 
     if "lsm_hook.c" in name:
-        content = content.replace("hook->list.head = head;", "hook->list.head = (void *)head;")
-        content = content.replace(
-            "hook->list.list.pprev = &head->first;",
-            "((struct hlist_node *)&hook->list.list)->pprev = &head->first;",
-        )
-        content = content.replace(
-            "&hook->list.head->first",
-            "&((struct hlist_head *)hook->list.head)->first"
-        )
-        
-        # Penonaktifan Type Checker rcu_assign_pointer untuk Clang LLD __compiletime_assert
+        # Bypassing RCU macro's strict type assertions (which causes __compiletime_assert undefined symbol in ld.lld)
         compat_rcu = """
 #include <linux/version.h>
+#ifndef ksu_rcu_assign_pointer
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-#undef rcu_assign_pointer
-#define rcu_assign_pointer(p, v) do { (p) = (typeof(p))(v); } while (0)
+#define ksu_rcu_assign_pointer(p, v) do { smp_wmb(); WRITE_ONCE(p, v); } while (0)
+#else
+#define ksu_rcu_assign_pointer(p, v) rcu_assign_pointer(p, v)
+#endif
 #endif
 """
         content = compat_rcu + content
+        # Mengganti pemanggilan rcu_assign_pointer murni dengan milik ksu
+        content = content.replace("rcu_assign_pointer(", "ksu_rcu_assign_pointer(")
 
     if "app_profile.c" in name:
-        # Menangani seccomp filter secara langsung dengan kondisional makro C
         content = re.sub(r"^.*seccomp\.filter_count.*$", r"// \g<0>", content, flags=re.MULTILINE)
         content = re.sub(r"^.*void\s+seccomp_filter_release.*$", r"/* \g<0> */", content, flags=re.MULTILINE)
         content = re.sub(
@@ -443,5 +437,5 @@ def patch_file_wrapper():
 
 patch_kernel_su_sources()
 patch_file_wrapper()
-print("✅ Patch KernelSU Legacy (Final Linker Assembly Fix) selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy selesai dilaksanakan!")
 EOF
