@@ -2,7 +2,7 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script (Final Linker Fix)"
+echo "🔧 Running KernelSU Legacy Patch Script (Final Linker Fix v2)"
 echo "---------------------------------------"
 
 python3 << 'EOF'
@@ -156,6 +156,8 @@ def apply_file_specific_patch(path, content):
             "&((struct hlist_head *)hook->list.head)->first"
         )
         # Fix untuk __compiletime_assert saat assign hook (Pointer Mismatch pada Kernel 4.14)
+        # FIX: sertakan <linux/version.h> sendiri agar tidak bergantung urutan
+        # penyisipan COMPAT_HEADERS - mencegah "LINUX_VERSION_CODE is not defined"
         compat_rcu = """
 #include <linux/version.h>
 #ifndef ksu_rcu_assign_pointer
@@ -183,6 +185,12 @@ def apply_file_specific_patch(path, content):
 
     if "su_mount_ns.c" in name:
         content = patch_su_mount_ns(content)
+
+    # FIX: patch_memory.c menggunakan simbol internal arm64 __flush_icache_range
+    # yang tidak selalu dideklarasikan publik. Ganti ke wrapper resmi
+    # flush_icache_range() yang tersedia konsisten di asm/cacheflush.h
+    if "patch_memory.c" in name:
+        content = content.replace("__flush_icache_range", "flush_icache_range")
 
     # 1. PEMBUNGKUS STUBS: rules.c (Fix undefined ext_int_mutex)
     if "rules.c" in name and "KSU_RULES_STUBS" not in content:
@@ -232,19 +240,6 @@ void ksu_selinux_hide_handle_second_stage(void) {}
 
     if name in ("apk_sign.c", "apk_sign.h", "manager.c"):
         content = patch_manager_allowlist(content)
-
-    # New: patch for arm64 patch_memory icache compatibility (guard against duplicate defs)
-    if "patch_memory.c" in name and "KSU_ICACHE_COMPAT" not in content and "ksu_flush_icache" not in content:
-        icache_compat = """
-/* KSU_ICACHE_COMPAT */
-#include <linux/version.h>
-#include <asm/cacheflush.h>
-
-#ifndef ksu_flush_icache
-#define ksu_flush_icache(start, end) flush_icache_range((unsigned long)(start), (unsigned long)(end))
-#endif
-"""
-        content = icache_compat + content
 
     return content
 
@@ -312,10 +307,13 @@ static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
     return content
 
 def patch_mount_umount_compat(content):
-    # Only adapt path_umount usage to a compat wrapper; do NOT replace path_mount globally
-    content = re.sub(r"\bpath_umount\s*\(", "ksu_path_umount_compat(", content)
+    content = re.sub(r"\bpath_mount\b", "do_mount", content)
+    content = re.sub(r"\bpath_umount\b", "ksu_path_umount_compat", content)
 
-    if "ksu_path_umount_compat" not in content and "KSU_PATH_UMOUNT_COMPAT_GUARD" not in content:
+    # FIX: guard dengan macro supaya kalau fungsi ini tersuntik di lebih dari
+    # satu file yang saling #include (mis. header + .c yang meng-include-nya),
+    # tidak terjadi "redefinition of ksu_path_umount_compat" saat kompilasi.
+    if "ksu_path_umount_compat" in content and "KSU_PATH_UMOUNT_COMPAT_GUARD" not in content:
         content = (
             "\n#include <linux/version.h>\n"
             "#include <linux/fs.h>\n"
@@ -412,5 +410,5 @@ def patch_file_wrapper():
 
 patch_kernel_su_sources()
 patch_file_wrapper()
-print("✅ Patch KernelSU Legacy (Full Linker Fix) selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy (Full Linker Fix v2) selesai dilaksanakan!")
 EOF
