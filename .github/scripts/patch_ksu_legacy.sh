@@ -2,14 +2,15 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script (Fix su_mount_ns & setns)"
+echo "🔧 Running KernelSU Legacy Patch Script (Fix SELinux sepolicy engine)"
 echo "---------------------------------------"
 
 python3 << 'EOF'
 import os, glob, re
 
 # ---------------------------------------------------------------------------
-# Header Kompatibilitas Global (Tanpa Macro Function Konflik)
+# Header Kompatibilitas Global 
+# (Menggunakan KSU_COMPAT_MARKER untuk pembungkus stubs dinamis)
 # ---------------------------------------------------------------------------
 COMPAT_HEADERS = """#include <linux/version.h>
 #include <linux/types.h>
@@ -84,6 +85,7 @@ typedef unsigned int __poll_t;
 #define fsnotify_add_inode_mark(mark, inode, allow_dups) fsnotify_add_mark(mark, inode, NULL, allow_dups)
 #endif
 #endif
+/* KSU_COMPAT_MARKER */
 """
 
 SIMPLE_REPLACEMENTS = [
@@ -98,6 +100,17 @@ ALLOWED_MANAGER_HASHES = [
     "3504179373d5778a486129a25b29b35a72064c0234a742f360e65383f98246cb",  # Next
 ]
 
+def wrap_file_with_stubs(content, stub_code):
+    """
+    Fungsi ini akan menyembunyikan SELURUH KODE ASLI untuk Kernel < 5.10
+    dan menggantinya dengan stub functions agar lolos dari linker.
+    """
+    marker = "/* KSU_COMPAT_MARKER */"
+    if marker in content:
+        pre, post = content.split(marker, 1)
+        return pre + marker + "\n#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n" + stub_code + "\n#else\n" + post + "\n#endif\n"
+    return content
+
 # ---------------------------------------------------------------------------
 # Modifikasi Sumber Utama KernelSU
 # ---------------------------------------------------------------------------
@@ -108,7 +121,7 @@ def patch_kernel_su_sources():
 
         original = content
 
-        if "#ifndef __poll_t" not in content:
+        if "KSU_COMPAT_MARKER" not in content:
             content = COMPAT_HEADERS + "\n" + content
 
         for old, new in SIMPLE_REPLACEMENTS:
@@ -165,19 +178,36 @@ def apply_file_specific_patch(path, content):
     if "su_mount_ns.c" in name:
         content = patch_su_mount_ns(content)
 
-    # Patch selinux_hide.c untuk Stub Legacy
-    if "selinux_hide.c" in name and "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)" not in content:
-        stub = """
-#include <linux/version.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+    # PEMBUNGKUS STUBS UNTUK FILE SEPOLICY.C
+    if "sepolicy.c" in name and "KSU_SEPOLICY_STUBS" not in content:
+        stub = """/* KSU_SEPOLICY_STUBS */
+struct policydb;
+struct selinux_policy;
+bool ksu_sepolicy_init(void) { return true; }
+void ksu_sepolicy_exit(void) {}
+bool ksu_dup_sepolicy(struct selinux_policy *p) { return true; }
+void ksu_destroy_sepolicy(struct selinux_policy *p) {}
+bool ksu_type(struct policydb *db, const char *t) { return true; }
+bool ksu_attribute(struct policydb *db, const char *a) { return true; }
+bool ksu_typeattribute(struct policydb *db, const char *t, const char *a) { return true; }
+bool ksu_permissive(struct policydb *db, const char *t) { return true; }
+bool ksu_allow(struct policydb *db, const char *s, const char *t, const char *c, const char *p) { return true; }
+bool ksu_allowxperm(struct policydb *db, const char *s, const char *t, const char *c, u16 spec, u32 pmin, u32 pmax) { return true; }
+bool ksu_type_transition(struct policydb *db, const char *s, const char *t, const char *c, const char *d) { return true; }
+bool ksu_type_change(struct policydb *db, const char *s, const char *t, const char *c, const char *d) { return true; }
+"""
+        content = wrap_file_with_stubs(content, stub)
+
+    # PEMBUNGKUS STUBS UNTUK FILE SELINUX_HIDE.C
+    if "selinux_hide.c" in name and "KSU_SELINUX_HIDE_STUBS" not in content:
+        stub = """/* KSU_SELINUX_HIDE_STUBS */
 void ksu_selinux_hide_init(void) {}
 void ksu_selinux_hide_exit(void) {}
 void ksu_selinux_hide_handle_post_fs_data(void) {}
 void ksu_selinux_hide_drop_backup_if_unused(void) {}
 void ksu_selinux_hide_handle_second_stage(void) {}
-#else
 """
-        content = stub + content + "\n#endif\n"
+        content = wrap_file_with_stubs(content, stub)
 
     if name in MOUNT_COMPAT_FILES:
         content = patch_mount_umount_compat(content)
@@ -188,7 +218,6 @@ void ksu_selinux_hide_handle_second_stage(void) {}
     return content
 
 def patch_su_mount_ns(content):
-    # Bungkus deklarasi __arm64_sys_setns dan pemanggilannya untuk Kernel < 5.10
     patch_setns = """
 #include <linux/version.h>
 #include <linux/syscalls.h>
@@ -371,5 +400,5 @@ def patch_file_wrapper():
 
 patch_kernel_su_sources()
 patch_file_wrapper()
-print("✅ Patch KernelSU Legacy & su_mount_ns selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy SELinux Engine selesai dilaksanakan!")
 EOF
