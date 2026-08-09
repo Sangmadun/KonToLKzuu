@@ -2,7 +2,7 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script (Fix lsm_hook macro)"
+echo "🔧 Running KernelSU Legacy Patch Script (Fix patch_memory icache)"
 echo "---------------------------------------"
 
 python3 << 'EOF'
@@ -117,7 +117,6 @@ ALLOWED_MANAGER_HASHES = [
 ]
 
 def wrap_file_with_stubs(content, stub_code):
-    """ Membungkus file aslinya ke dalam blok #else, dan menaruh stub function di Kernel < 5.10 """
     marker = "/* KSU_COMPAT_MARKER */"
     if marker in content:
         pre, post = content.split(marker, 1)
@@ -143,7 +142,6 @@ def patch_kernel_su_sources():
         if not os.path.exists("include/linux/pgtable.h"):
             content = content.replace("<linux/pgtable.h>", "<asm/pgtable.h>")
 
-        # Terapkan fungsi wrapper universal ke semua file
         content = patch_mount_umount_compat(content)
         content = apply_file_specific_patch(path, content)
 
@@ -161,6 +159,11 @@ def apply_file_specific_patch(path, content):
             "typedef long (*syscall_fn_t)(const struct pt_regs *);\n#endif\n"
         ) + content
 
+    # BLOK INI YANG SEBELUMNYA TERHAPUS
+    if "patch_memory" in name:
+        content = content.replace("__flush_icache_range", "flush_icache_range")
+        content = content.replace("__pte_to_phys", "pte_pfn")
+
     if "lsm_hook.c" in name:
         content = content.replace("hook->list.head = head;", "hook->list.head = (void *)head;")
         content = content.replace(
@@ -172,7 +175,6 @@ def apply_file_specific_patch(path, content):
             "&((struct hlist_head *)hook->list.head)->first"
         )
         
-        # Penambahan #include <linux/version.h> agar makro LINUX_VERSION_CODE dikenali
         compat_rcu = """
 #include <linux/version.h>
 #ifndef ksu_rcu_assign_pointer
@@ -200,14 +202,12 @@ def apply_file_specific_patch(path, content):
     if "su_mount_ns.c" in name:
         content = patch_su_mount_ns(content)
 
-    # 1. PEMBUNGKUS STUBS: rules.c (Fix undefined ext_int_mutex)
     if "rules.c" in name and "KSU_RULES_STUBS" not in content:
         stub = """/* KSU_RULES_STUBS */
 void apply_kernelsu_rules(void) {}
 """
         content = wrap_file_with_stubs(content, stub)
 
-    # 2. PEMBUNGKUS STUBS: sepolicy.c (Fix missing SELinux rule injections)
     if "sepolicy.c" in name and "KSU_SEPOLICY_STUBS" not in content:
         stub = """/* KSU_SEPOLICY_STUBS */
 struct policydb;
@@ -235,7 +235,6 @@ bool ksu_auditallowxperm(struct policydb *db, const char *s, const char *t, cons
 """
         content = wrap_file_with_stubs(content, stub)
 
-    # 3. PEMBUNGKUS STUBS: selinux_hide.c
     if "selinux_hide.c" in name and "KSU_SELINUX_HIDE_STUBS" not in content:
         stub = """/* KSU_SELINUX_HIDE_STUBS */
 void ksu_selinux_hide_init(void) {}
@@ -412,5 +411,5 @@ def patch_file_wrapper():
 
 patch_kernel_su_sources()
 patch_file_wrapper()
-print("✅ Patch KernelSU Legacy (Fixed lsm_hook macro) selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy selesai dilaksanakan!")
 EOF
