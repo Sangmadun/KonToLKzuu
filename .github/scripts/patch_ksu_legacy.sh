@@ -76,9 +76,6 @@ typedef unsigned int __poll_t;
 #ifndef security_inode_init_security_anon
 #define security_inode_init_security_anon(inode, qstr, anon) (0)
 #endif
-#ifndef seccomp_filter_release
-#define seccomp_filter_release(task) do {} while (0)
-#endif
 #ifndef fsnotify_add_inode_mark
 #define fsnotify_add_inode_mark(mark, inode, allow_dups) fsnotify_add_mark(mark, inode, NULL, allow_dups)
 #endif
@@ -156,7 +153,6 @@ def apply_file_specific_patch(path, content):
 
     if "app_profile.c" in name:
         content = re.sub(r"([^\n]*seccomp\.filter_count[^\n]*)", r"// \1", content)
-        # Bungkus deklarasi seccomp_filter_release agar tidak bentrok dengan makro preprocessor
         content = re.sub(
             r"(void\s+seccomp_filter_release\s*\([^)]*\)\s*;)",
             r"#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\n\1\n#endif",
@@ -166,7 +162,7 @@ def apply_file_specific_patch(path, content):
     if "pkg_observer.c" in name:
         content = patch_pkg_observer(content)
 
-    if "selinux" in name:
+    if "selinux" in name or "rules.c" in name:
         content = patch_selinux_state_refs(content)
 
     if "sepolicy.c" in name and "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)" not in content:
@@ -241,8 +237,9 @@ def patch_selinux_state_refs(content):
             "#ifndef ext_int_mutex\nextern struct mutex ext_int_mutex;\n#endif\n"
             "#endif\n"
         ) + "\n" + content
+    # Mengganti pengaksesan selinux_state.policy dan policy_mutex untuk Kernel < 5.10
     content = re.sub(r"\bselinux_state\.policy\b", "selinux_state.ss", content)
-    content = re.sub(r"selinux_state\.policy_mutex", "ext_int_mutex", content)
+    content = re.sub(r"\bselinux_state\.policy_mutex\b", "ext_int_mutex", content)
     return content
 
 def patch_mount_umount_compat(content):
