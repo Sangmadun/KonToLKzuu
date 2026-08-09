@@ -2,14 +2,14 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script"
+echo "🔧 Running KernelSU Legacy Patch Script (Linker & SELinux Engine Fix)"
 echo "---------------------------------------"
 
 python3 << 'EOF'
 import os, glob, re
 
 # ---------------------------------------------------------------------------
-# Compat headers injected once at the top of every touched file
+# Header Kompatibilitas Global
 # ---------------------------------------------------------------------------
 COMPAT_HEADERS = """#include <linux/version.h>
 #include <linux/types.h>
@@ -50,7 +50,7 @@ typedef unsigned int __poll_t;
 #define KERNEL_SU_VERSION_TAG "v1.0.0"
 #endif
 
-/* Fallback Symbol Compatibilities Kernel 4.14 */
+/* Compat API Memory & User Access Kernel < 5.8 */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
 #ifndef strncpy_from_user_nofault
 #define strncpy_from_user_nofault(dst, src, count) strncpy_from_user(dst, src, count)
@@ -61,8 +61,12 @@ typedef unsigned int __poll_t;
 #ifndef copy_to_kernel_nofault
 #define copy_to_kernel_nofault(dst, src, size) probe_kernel_write(dst, src, size)
 #endif
+#ifndef copy_to_user_nofault
+#define copy_to_user_nofault(dst, src, size) copy_to_user(dst, src, size)
+#endif
 #endif
 
+/* Compat System Call & VFS Kernel < 5.10 */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
 #ifndef ksys_close
 #define ksys_close sys_close
@@ -79,6 +83,9 @@ typedef unsigned int __poll_t;
 #ifndef fsnotify_add_inode_mark
 #define fsnotify_add_inode_mark(mark, inode, allow_dups) fsnotify_add_mark(mark, inode, NULL, allow_dups)
 #endif
+#ifndef __arm64_sys_setns
+#define __arm64_sys_setns(regs) sys_setns((regs)->regs[0], (regs)->regs[1])
+#endif
 #endif
 """
 
@@ -87,22 +94,15 @@ SIMPLE_REPLACEMENTS = [
     ("<linux/minmax.h>", "<linux/kernel.h>"),
 ]
 
-MOUNT_COMPAT_FILES = ("ksud.c", "sucompat.c", "allowlist.c", "kernel_compat.c")
+MOUNT_COMPAT_FILES = ("ksud.c", "sucompat.c", "allowlist.c", "kernel_compat.c", "rules.c")
 
 ALLOWED_MANAGER_HASHES = [
     "e885c3c1e2d671d18413e15091e9f138864f16a037803e48113c412e69888d3e",  # Official
     "3504179373d5778a486129a25b29b35a72064c0234a742f360e65383f98246cb",  # Next
 ]
 
-def guarded_stub(guard_lt, before):
-    pre = (
-        f"#include <linux/version.h>\n#include <linux/types.h>\n\n"
-        f"#if LINUX_VERSION_CODE < KERNEL_VERSION({guard_lt})\n{before}\n#else\n"
-    )
-    return pre, "\n#endif\n"
-
 # ---------------------------------------------------------------------------
-# Main pass over drivers/kernelsu/**/*.[ch]
+# Modifikasi Sumber Utama KernelSU
 # ---------------------------------------------------------------------------
 def patch_kernel_su_sources():
     for path in glob.glob("**/drivers/kernelsu/**/*.[ch]", recursive=True):
@@ -165,23 +165,19 @@ def apply_file_specific_patch(path, content):
     if "selinux" in name or "rules.c" in name:
         content = patch_selinux_state_refs(content)
 
-    if "sepolicy.c" in name and "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)" not in content:
-        pre, post = guarded_stub(
-            "5, 10, 0",
-            "bool ksu_sepolicy_init(void) { return true; }\nvoid ksu_sepolicy_exit(void) {}",
-        )
-        content = pre + content + post
-
+    # Patch selinux_hide.c untuk Stub Legacy
     if "selinux_hide.c" in name and "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)" not in content:
-        pre, post = guarded_stub(
-            "5, 10, 0",
-            "void ksu_selinux_hide_init(void) {}\n"
-            "void ksu_selinux_hide_exit(void) {}\n"
-            "void ksu_selinux_hide_handle_post_fs_data(void) {}\n"
-            "void ksu_selinux_hide_drop_backup_if_unused(void) {}\n"
-            "void ksu_selinux_hide_handle_second_stage(void) {}",
-        )
-        content = pre + content + post
+        stub = """
+#include <linux/version.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+void ksu_selinux_hide_init(void) {}
+void ksu_selinux_hide_exit(void) {}
+void ksu_selinux_hide_handle_post_fs_data(void) {}
+void ksu_selinux_hide_drop_backup_if_unused(void) {}
+void ksu_selinux_hide_handle_second_stage(void) {}
+#else
+"""
+        content = stub + content + "\n#endif\n"
 
     if name in MOUNT_COMPAT_FILES:
         content = patch_mount_umount_compat(content)
@@ -229,22 +225,33 @@ static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
     return content
 
 def patch_selinux_state_refs(content):
+    # Penanganan struktur SELinux & selinux_cred untuk Kernel < 5.10
+    header_patch = """
+#include <linux/version.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#ifndef selinux_policy
+#define selinux_policy selinux_ss
+#endif
+#ifndef ext_int_mutex
+extern struct mutex ext_int_mutex;
+#endif
+#ifndef selinux_cred
+#define selinux_cred(cred) ((struct task_security_struct *)(cred)->security)
+#endif
+#endif
+"""
     if "#ifndef selinux_policy" not in content:
-        content = (
-            "#include <linux/version.h>\n"
-            "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n"
-            "#ifndef selinux_policy\n#define selinux_policy selinux_ss\n#endif\n"
-            "#ifndef ext_int_mutex\nextern struct mutex ext_int_mutex;\n#endif\n"
-            "#endif\n"
-        ) + "\n" + content
-    # Mengganti pengaksesan selinux_state.policy dan policy_mutex untuk Kernel < 5.10
+        content = header_patch + "\n" + content
+
     content = re.sub(r"\bselinux_state\.policy\b", "selinux_state.ss", content)
     content = re.sub(r"\bselinux_state\.policy_mutex\b", "ext_int_mutex", content)
     return content
 
 def patch_mount_umount_compat(content):
+    # Penggantian path_mount / path_umount ke fungsi legacy
     content = re.sub(r"\bpath_mount\b", "do_mount", content)
     content = re.sub(r"\bpath_umount\b", "ksu_path_umount_compat", content)
+    
     if "ksu_path_umount_compat" not in content:
         content = (
             "\n#include <linux/version.h>\n"
@@ -285,7 +292,7 @@ bool ksu_is_manager_apk(const char *hash) {{
     )
 
 # ---------------------------------------------------------------------------
-# file_wrapper.c: disable unsupported VFS ops (iopoll/remap/fadvise) + selinux_inode
+# Patch khusus file_wrapper.c
 # ---------------------------------------------------------------------------
 def patch_file_wrapper():
     for path in glob.glob("**/drivers/kernelsu/infra/file_wrapper.c", recursive=True):
@@ -339,5 +346,5 @@ def patch_file_wrapper():
 
 patch_kernel_su_sources()
 patch_file_wrapper()
-print("✅ Patch KernelSU Legacy selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy, Linker Fix, & Multi-Manager selesai dilaksanakan!")
 EOF
