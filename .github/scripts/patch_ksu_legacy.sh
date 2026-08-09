@@ -2,7 +2,7 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script (LSM Hook hlist to list Fix)"
+echo "🔧 Running KernelSU Legacy Patch Script (Clean LSM Hook Fix)"
 echo "---------------------------------------"
 
 python3 << 'EOF'
@@ -202,19 +202,23 @@ def apply_file_specific_patch(path, content):
         content = content.replace("__pte_to_phys", "pte_pfn")
 
     if "lsm_hook.c" in name:
-        # Pemetaan hlist_head/hlist_node ke list_head untuk Kernel < 5.10
+        # Penanganan khusus untuk Kernel < 5.10 pada lsm_hook.c tanpa merusak hlist global
         lsm_compat = """
 #include <linux/version.h>
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-#undef hlist_head
-#undef hlist_node
-#define hlist_head list_head
-#define hlist_node list_head
-#define first next
-#define pprev prev
+#define ksu_hlist_head list_head
+#define ksu_hlist_node list_head
+#else
+#define ksu_hlist_head hlist_head
+#define ksu_hlist_node hlist_node
 #endif
 """
         content = lsm_compat + content
+        content = content.replace("struct hlist_head", "struct ksu_hlist_head")
+        content = content.replace("struct hlist_node", "struct ksu_hlist_node")
+        content = content.replace("hook->list.head = head;", "hook->list.head = (void *)head;")
+        content = content.replace("hook->list.list.pprev", "((struct list_head *)&hook->list.list)->prev")
+        content = content.replace("hook->list.head->first", "((struct list_head *)hook->list.head)->next")
 
         compat_rcu = """
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
@@ -445,5 +449,5 @@ def patch_file_wrapper():
 
 patch_kernel_su_sources()
 patch_file_wrapper()
-print("✅ Patch KernelSU Legacy (LSM Hook hlist mapping) selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy selesai dilaksanakan!")
 EOF
