@@ -300,17 +300,20 @@ static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
 def patch_mount_umount_compat(content):
     content = re.sub(r"\bpath_mount\b", "do_mount", content)
     content = re.sub(r"\bpath_umount\b", "ksu_path_umount_compat", content)
-    
-    if "ksu_path_umount_compat" not in content:
+
+    if "ksu_path_umount_compat" in content and "KSU_PATH_UMOUNT_COMPAT_GUARD" not in content:
         content = (
             "\n#include <linux/version.h>\n"
             "#include <linux/fs.h>\n"
             "#include <linux/syscalls.h>\n"
             "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n"
+            "#ifndef KSU_PATH_UMOUNT_COMPAT_GUARD\n"
+            "#define KSU_PATH_UMOUNT_COMPAT_GUARD\n"
             "asmlinkage long sys_umount(char __user *name, int flags);\n"
             "static inline int ksu_path_umount_compat(struct path *path, int flags) {\n"
             "    return sys_umount((char __user *)path->dentry->d_name.name, flags);\n"
-            "}\n#endif\n"
+            "}\n"
+            "#endif\n#endif\n"
         ) + content
     return content
 
