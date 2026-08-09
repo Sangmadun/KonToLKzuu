@@ -2,7 +2,7 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script (Linker & VFS Fix, simplified)"
+echo "🔧 Running KernelSU Legacy Patch Script"
 echo "---------------------------------------"
 
 python3 << 'EOF'
