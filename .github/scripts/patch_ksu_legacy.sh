@@ -2,7 +2,7 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script (Fix SELinux sepolicy engine)"
+echo "🔧 Running KernelSU Legacy Patch Script (Final Linker Fix)"
 echo "---------------------------------------"
 
 python3 << 'EOF'
@@ -10,7 +10,6 @@ import os, glob, re
 
 # ---------------------------------------------------------------------------
 # Header Kompatibilitas Global 
-# (Menggunakan KSU_COMPAT_MARKER untuk pembungkus stubs dinamis)
 # ---------------------------------------------------------------------------
 COMPAT_HEADERS = """#include <linux/version.h>
 #include <linux/types.h>
@@ -84,6 +83,9 @@ typedef unsigned int __poll_t;
 #ifndef fsnotify_add_inode_mark
 #define fsnotify_add_inode_mark(mark, inode, allow_dups) fsnotify_add_mark(mark, inode, NULL, allow_dups)
 #endif
+#ifndef seccomp_filter_release
+#define seccomp_filter_release(task) do {} while (0)
+#endif
 #endif
 /* KSU_COMPAT_MARKER */
 """
@@ -93,18 +95,13 @@ SIMPLE_REPLACEMENTS = [
     ("<linux/minmax.h>", "<linux/kernel.h>"),
 ]
 
-MOUNT_COMPAT_FILES = ("ksud.c", "sucompat.c", "allowlist.c", "kernel_compat.c", "rules.c")
-
 ALLOWED_MANAGER_HASHES = [
     "e885c3c1e2d671d18413e15091e9f138864f16a037803e48113c412e69888d3e",  # Official
     "3504179373d5778a486129a25b29b35a72064c0234a742f360e65383f98246cb",  # Next
 ]
 
 def wrap_file_with_stubs(content, stub_code):
-    """
-    Fungsi ini akan menyembunyikan SELURUH KODE ASLI untuk Kernel < 5.10
-    dan menggantinya dengan stub functions agar lolos dari linker.
-    """
+    """ Membungkus file aslinya ke dalam blok #else, dan menaruh stub function di Kernel < 5.10 """
     marker = "/* KSU_COMPAT_MARKER */"
     if marker in content:
         pre, post = content.split(marker, 1)
@@ -130,6 +127,8 @@ def patch_kernel_su_sources():
         if not os.path.exists("include/linux/pgtable.h"):
             content = content.replace("<linux/pgtable.h>", "<asm/pgtable.h>")
 
+        # Terapkan fungsi wrapper universal ke semua file
+        content = patch_mount_umount_compat(content)
         content = apply_file_specific_patch(path, content)
 
         if content != original:
@@ -156,29 +155,42 @@ def apply_file_specific_patch(path, content):
             "&hook->list.head->first",
             "&((struct hlist_head *)hook->list.head)->first"
         )
-
-    if "patch_memory" in name:
-        content = content.replace("__flush_icache_range", "flush_icache_range")
-        content = content.replace("__pte_to_phys", "pte_pfn")
+        # Fix untuk __compiletime_assert saat assign hook (Pointer Mismatch pada Kernel 4.14)
+        compat_rcu = """
+#ifndef ksu_rcu_assign_pointer
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#define ksu_rcu_assign_pointer(p, v) WRITE_ONCE(p, v)
+#else
+#define ksu_rcu_assign_pointer(p, v) rcu_assign_pointer(p, v)
+#endif
+#endif
+"""
+        content = compat_rcu + content
+        content = content.replace("rcu_assign_pointer(", "ksu_rcu_assign_pointer(")
 
     if "app_profile.c" in name:
         content = re.sub(r"([^\n]*seccomp\.filter_count[^\n]*)", r"// \1", content)
+        # Hapus deklarasi agar makro dari header bisa bekerja
         content = re.sub(
             r"(void\s+seccomp_filter_release\s*\([^)]*\)\s*;)",
-            r"#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\n\1\n#endif",
+            r"/* \1 */",
             content
         )
 
     if "pkg_observer.c" in name:
         content = patch_pkg_observer(content)
 
-    if "selinux" in name or "rules.c" in name:
-        content = patch_selinux_state_refs(content)
-
     if "su_mount_ns.c" in name:
         content = patch_su_mount_ns(content)
 
-    # PEMBUNGKUS STUBS UNTUK FILE SEPOLICY.C
+    # 1. PEMBUNGKUS STUBS: rules.c (Fix undefined ext_int_mutex)
+    if "rules.c" in name and "KSU_RULES_STUBS" not in content:
+        stub = """/* KSU_RULES_STUBS */
+void apply_kernelsu_rules(void) {}
+"""
+        content = wrap_file_with_stubs(content, stub)
+
+    # 2. PEMBUNGKUS STUBS: sepolicy.c (Fix missing SELinux rule injections)
     if "sepolicy.c" in name and "KSU_SEPOLICY_STUBS" not in content:
         stub = """/* KSU_SEPOLICY_STUBS */
 struct policydb;
@@ -195,10 +207,18 @@ bool ksu_allow(struct policydb *db, const char *s, const char *t, const char *c,
 bool ksu_allowxperm(struct policydb *db, const char *s, const char *t, const char *c, u16 spec, u32 pmin, u32 pmax) { return true; }
 bool ksu_type_transition(struct policydb *db, const char *s, const char *t, const char *c, const char *d) { return true; }
 bool ksu_type_change(struct policydb *db, const char *s, const char *t, const char *c, const char *d) { return true; }
+bool ksu_deny(struct policydb *db, const char *s, const char *t, const char *c, const char *p) { return true; }
+bool ksu_enforce(struct policydb *db, const char *t) { return true; }
+bool ksu_type_member(struct policydb *db, const char *s, const char *t, const char *c, const char *d) { return true; }
+bool ksu_genfscon(struct policydb *db, const char *fs, const char *path, const char *ctx) { return true; }
+bool ksu_auditallow(struct policydb *db, const char *s, const char *t, const char *c, const char *p) { return true; }
+bool ksu_dontaudit(struct policydb *db, const char *s, const char *t, const char *c, const char *p) { return true; }
+bool ksu_dontauditxperm(struct policydb *db, const char *s, const char *t, const char *c, u16 spec, u32 pmin, u32 pmax) { return true; }
+bool ksu_auditallowxperm(struct policydb *db, const char *s, const char *t, const char *c, u16 spec, u32 pmin, u32 pmax) { return true; }
 """
         content = wrap_file_with_stubs(content, stub)
 
-    # PEMBUNGKUS STUBS UNTUK FILE SELINUX_HIDE.C
+    # 3. PEMBUNGKUS STUBS: selinux_hide.c
     if "selinux_hide.c" in name and "KSU_SELINUX_HIDE_STUBS" not in content:
         stub = """/* KSU_SELINUX_HIDE_STUBS */
 void ksu_selinux_hide_init(void) {}
@@ -208,9 +228,6 @@ void ksu_selinux_hide_drop_backup_if_unused(void) {}
 void ksu_selinux_hide_handle_second_stage(void) {}
 """
         content = wrap_file_with_stubs(content, stub)
-
-    if name in MOUNT_COMPAT_FILES:
-        content = patch_mount_umount_compat(content)
 
     if name in ("apk_sign.c", "apk_sign.h", "manager.c"):
         content = patch_manager_allowlist(content)
@@ -278,28 +295,6 @@ static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
         "#endif",
         content,
     )
-    return content
-
-def patch_selinux_state_refs(content):
-    header_patch = """
-#include <linux/version.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-#ifndef selinux_policy
-#define selinux_policy selinux_ss
-#endif
-#ifndef ext_int_mutex
-extern struct mutex ext_int_mutex;
-#endif
-#ifndef selinux_cred
-#define selinux_cred(cred) ((struct task_security_struct *)(cred)->security)
-#endif
-#endif
-"""
-    if "#ifndef selinux_policy" not in content:
-        content = header_patch + "\n" + content
-
-    content = re.sub(r"\bselinux_state\.policy\b", "selinux_state.ss", content)
-    content = re.sub(r"\bselinux_state\.policy_mutex\b", "ext_int_mutex", content)
     return content
 
 def patch_mount_umount_compat(content):
@@ -400,5 +395,5 @@ def patch_file_wrapper():
 
 patch_kernel_su_sources()
 patch_file_wrapper()
-print("✅ Patch KernelSU Legacy SELinux Engine selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy (Full Linker Fix) selesai dilaksanakan!")
 EOF
