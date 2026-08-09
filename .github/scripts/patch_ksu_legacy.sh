@@ -2,7 +2,7 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script (Fix app_profile macro)"
+echo "🔧 Running KernelSU Legacy Patch Script (Final Linker Assembly Fix)"
 echo "---------------------------------------"
 
 python3 << 'EOF'
@@ -90,15 +90,6 @@ typedef unsigned int __poll_t;
 #endif
 #ifndef fsnotify_add_inode_mark
 #define fsnotify_add_inode_mark(mark, inode, allow_dups) fsnotify_add_mark(mark, inode, NULL, allow_dups)
-#endif
-#endif
-
-/* Seccomp Filter Release Compat */
-#ifndef ksu_seccomp_filter_release
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-#define ksu_seccomp_filter_release(task) do {} while (0)
-#else
-#define ksu_seccomp_filter_release(task) seccomp_filter_release(task)
 #endif
 #endif
 
@@ -221,25 +212,25 @@ def apply_file_specific_patch(path, content):
             "&((struct hlist_head *)hook->list.head)->first"
         )
         
+        # Penonaktifan Type Checker rcu_assign_pointer untuk Clang LLD __compiletime_assert
         compat_rcu = """
 #include <linux/version.h>
-#ifndef ksu_rcu_assign_pointer
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-#define ksu_rcu_assign_pointer(p, v) WRITE_ONCE(p, v)
-#else
-#define ksu_rcu_assign_pointer(p, v) rcu_assign_pointer(p, v)
-#endif
+#undef rcu_assign_pointer
+#define rcu_assign_pointer(p, v) do { (p) = (typeof(p))(v); } while (0)
 #endif
 """
         content = compat_rcu + content
-        content = content.replace("rcu_assign_pointer(", "ksu_rcu_assign_pointer(")
 
     if "app_profile.c" in name:
-        # Menggunakan regex MULTILINE agar langsung menghapus/meng-comment baris penyebab error
+        # Menangani seccomp filter secara langsung dengan kondisional makro C
         content = re.sub(r"^.*seccomp\.filter_count.*$", r"// \g<0>", content, flags=re.MULTILINE)
         content = re.sub(r"^.*void\s+seccomp_filter_release.*$", r"/* \g<0> */", content, flags=re.MULTILINE)
-        # Mengubah fungsi pemanggilannya ke compat function
-        content = content.replace("seccomp_filter_release(", "ksu_seccomp_filter_release(")
+        content = re.sub(
+            r"seccomp_filter_release\(([^)]+)\);",
+            r"#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\n    seccomp_filter_release(\1);\n#endif",
+            content
+        )
 
     if "pkg_observer.c" in name:
         content = patch_pkg_observer(content)
@@ -261,6 +252,7 @@ bool ksu_sepolicy_init(void) { return true; }
 void ksu_sepolicy_exit(void) {}
 bool ksu_dup_sepolicy(struct selinux_policy *p) { return true; }
 void ksu_destroy_sepolicy(struct selinux_policy *p) {}
+int handle_sepolicy(unsigned long cmd, void *arg) { return 0; }
 bool ksu_type(struct policydb *db, const char *t) { return true; }
 bool ksu_attribute(struct policydb *db, const char *a) { return true; }
 bool ksu_typeattribute(struct policydb *db, const char *t, const char *a) { return true; }
@@ -451,5 +443,5 @@ def patch_file_wrapper():
 
 patch_kernel_su_sources()
 patch_file_wrapper()
-print("✅ Patch KernelSU Legacy selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy (Final Linker Assembly Fix) selesai dilaksanakan!")
 EOF
