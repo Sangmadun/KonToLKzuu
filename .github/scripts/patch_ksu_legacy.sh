@@ -2,7 +2,7 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script (Final Redefinition Fix)"
+echo "🔧 Running KernelSU Legacy Patch Script (Fix lsm_hook macro)"
 echo "---------------------------------------"
 
 python3 << 'EOF'
@@ -171,8 +171,10 @@ def apply_file_specific_patch(path, content):
             "&hook->list.head->first",
             "&((struct hlist_head *)hook->list.head)->first"
         )
-        # Fix untuk __compiletime_assert saat assign hook (Pointer Mismatch pada Kernel 4.14)
+        
+        # Penambahan #include <linux/version.h> agar makro LINUX_VERSION_CODE dikenali
         compat_rcu = """
+#include <linux/version.h>
 #ifndef ksu_rcu_assign_pointer
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
 #define ksu_rcu_assign_pointer(p, v) WRITE_ONCE(p, v)
@@ -410,5 +412,5 @@ def patch_file_wrapper():
 
 patch_kernel_su_sources()
 patch_file_wrapper()
-print("✅ Patch KernelSU Legacy (Redefinition Fix) selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy (Fixed lsm_hook macro) selesai dilaksanakan!")
 EOF
