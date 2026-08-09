@@ -156,6 +156,12 @@ def apply_file_specific_patch(path, content):
 
     if "app_profile.c" in name:
         content = re.sub(r"([^\n]*seccomp\.filter_count[^\n]*)", r"// \1", content)
+        # Bungkus deklarasi seccomp_filter_release agar tidak bentrok dengan makro preprocessor
+        content = re.sub(
+            r"(void\s+seccomp_filter_release\s*\([^)]*\)\s*;)",
+            r"#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\n\1\n#endif",
+            content
+        )
 
     if "pkg_observer.c" in name:
         content = patch_pkg_observer(content)
@@ -275,7 +281,6 @@ bool ksu_is_manager_apk(const char *hash) {{
     return false;
 }}
 """
-    # Replace entire ksu_is_manager_apk function body matching up to the closing brace
     return re.sub(
         r"bool\s+ksu_is_manager_apk\s*\([^)]*\)\s*\{[\s\S]*?\n\}",
         replacement.strip(),
@@ -296,7 +301,6 @@ def patch_file_wrapper():
                 "#ifndef REMAP_FILE_DEDUP\n#define REMAP_FILE_DEDUP 0\n#endif\n"
             ) + code
 
-        # Correct replacement for SELinux inode security struct in Kernel 4.14
         code = re.sub(
             r"selinux_inode\(([^)]+)\)",
             r"((struct inode_security_struct *)(\1)->i_security)",
@@ -338,5 +342,5 @@ def patch_file_wrapper():
 
 patch_kernel_su_sources()
 patch_file_wrapper()
-print("✅ Patch KernelSU Legacy, Linker Fix, & Multi-Manager selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy selesai dilaksanakan!")
 EOF
