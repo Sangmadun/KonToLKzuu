@@ -233,8 +233,8 @@ void ksu_selinux_hide_handle_second_stage(void) {}
     if name in ("apk_sign.c", "apk_sign.h", "manager.c"):
         content = patch_manager_allowlist(content)
 
-    # New: patch for arm64 patch_memory icache compatibility
-    if "patch_memory.c" in name and "KSU_ICACHE_COMPAT" not in content:
+    # New: patch for arm64 patch_memory icache compatibility (guard against duplicate defs)
+    if "patch_memory.c" in name and "KSU_ICACHE_COMPAT" not in content and "ksu_flush_icache" not in content:
         icache_compat = """
 /* KSU_ICACHE_COMPAT */
 #include <linux/version.h>
@@ -316,10 +316,10 @@ static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
     return content
 
 def patch_mount_umount_compat(content):
-    content = re.sub(r"\bpath_mount\b", "do_mount", content)
-    content = re.sub(r"\bpath_umount\b", "ksu_path_umount_compat", content)
+    # Only adapt path_umount usage to a compat wrapper; do NOT replace path_mount globally
+    content = re.sub(r"\bpath_umount\s*\(", "ksu_path_umount_compat(", content)
 
-    if "ksu_path_umount_compat" in content and "KSU_PATH_UMOUNT_COMPAT_GUARD" not in content:
+    if "ksu_path_umount_compat" not in content and "KSU_PATH_UMOUNT_COMPAT_GUARD" not in content:
         content = (
             "\n#include <linux/version.h>\n"
             "#include <linux/fs.h>\n"
