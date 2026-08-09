@@ -120,9 +120,6 @@ jobs:
         with:
           ksu_fork: ${{ inputs.ksu_fork }}
 
-      - name: Patch KernelSU Hook & Legacy Headers
-        run: bash .github/scripts/patch_ksu_legacy.sh
-
       - name: Apply SUSFS Patch & Configs
         if: inputs.include_susfs == true
         uses: ./.github/actions/apply-susfs
