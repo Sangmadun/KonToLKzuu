@@ -65,71 +65,73 @@ runs:
         [ "${{ inputs.include_bbr }}" = "true" ] && FEATURE_TAGS="${FEATURE_TAGS}-BBR"
 
         # -----------------------------------------------------------------
-        # GENERATE ANYKERNEL.SH
+        # GENERATE ANYKERNEL.SH (FLUSH TO LEFT TO PREVENT PARSING ERRORS)
         # -----------------------------------------------------------------
         cat << 'EOF_AK3' > anykernel.sh
-        # AnyKernel3 Ramdisk Mod Script for Xiaomi Camellia (MT6833)
-        # osm0sis @ xda-developers
+# AnyKernel3 Ramdisk Mod Script for Xiaomi Camellia (MT6833)
+# osm0sis @ xda-developers
 
-        ## AnyKernel setup
-        properties() { '
-        kernel.string=Lotus Kernel for Xiaomi Camellia
-        do.devicecheck=1
-        do.modules=0
-        do.systemless=1
-        do.cleanup=1
-        do.cleanuponabort=0
-        device.name1=camellia
-        device.name2=camellian
-        supported.versions=
-        supported.patchlevels=
-        '; } # end properties
+## AnyKernel setup
+properties() { '
+kernel.string=Lotus Kernel for Xiaomi Camellia
+do.devicecheck=0
+do.modules=0
+do.systemless=1
+do.cleanup=1
+do.cleanuponabort=1
+device.name1=camellia
+device.name2=camellian
+supported.versions=
+supported.patchlevels=
+supported.vendorpatchlevels=
+'; } # end properties
 
-        ## AnyKernel install
-        boot_attributes() {
-        set_perm_recursive 0 0 755 644 $RAMDISK/*;
-        set_perm_recursive 0 0 750 750 $RAMDISK/init* $RAMDISK/sbin;
-        } # end attributes
+## AnyKernel install
+boot_attributes() {
+set_perm_recursive 0 0 755 644 $RAMDISK/*;
+set_perm_recursive 0 0 750 750 $RAMDISK/init* $RAMDISK/sbin;
+} # end attributes
 
-        # boot shell variables
-        block=auto;
-        is_slot_device=auto;
-        ramdisk_compression=auto;
-        patch_vbmeta_flag=auto;
+# boot shell variables
+block=boot;
+is_slot_device=auto;
+ramdisk_compression=auto;
+patch_vbmeta_flag=auto;
+no_block_display=1;
 
-        # Import fungsi utama AnyKernel
-        . tools/ak3-core.sh;
+# Import fungsi utama AnyKernel
+. tools/ak3-core.sh;
 
-        # Fix O3BFD File Descriptor
-        if [ -z "$O3BFD" ] || [ ! -e "/proc/self/fd/$O3BFD" ]; then
-          for fd in 1 2 3 0; do
-            if [ -e "/proc/self/fd/$fd" ]; then
-              O3BFD=$fd;
-              break;
-            fi;
-          done;
-        fi;
+# Fix O3BFD File Descriptor
+if [ -z "$O3BFD" ] || [ ! -e "/proc/self/fd/$O3BFD" ]; then
+  for fd in 1 2 3 0; do
+    if [ -e "/proc/self/fd/$fd" ]; then
+      O3BFD=$fd;
+      break;
+    fi;
+  done;
+fi;
 
-        # Print Full Cyber ASCII Banner
-        ui_print "==================================================";
-        ui_print " #    ####  ##### #   #  ###   ### #  ####  #   # ";
-        ui_print " #   #    #   #   #   # #     #    # #     # #  # ";
-        ui_print " #   #    #   #   #   #  ###  #    ##      #  # # ";
-        ui_print " #   #    #   #   #   #     # #    # #     #   ## ";
-        ui_print " ###  ####    #    ###  ####   ### #  #### #    # ";
-        ui_print "==================================================";
-        ui_print "               LOTUS-KERNEL CUSTOM                ";
-        ui_print "==================================================";
-        ui_print " [>] Device   : Xiaomi Camellia (Redmi Note 10 5G)";
-        ui_print " [>] Kernel   : Linux 4.14.x";
-        ui_print "==================================================";
+# Print Full Cyber ASCII Banner
+ui_print "==================================================";
+ui_print " #    ####  ##### #   #  ###   ### #  ####  #   # ";
+ui_print " #   #    #   #   #   # #     #    # #     # #  # ";
+ui_print " #   #    #   #   #   #  ###  #    ##      #  # # ";
+ui_print " #   #    #   #   #   #     # #    # #     #   ## ";
+ui_print " ###  ####    #    ###  ####   ### #  #### #    # ";
+ui_print "==================================================";
+ui_print "               LOTUS-KERNEL CUSTOM                ";
+ui_print "==================================================";
+ui_print " [>] Device   : Xiaomi Camellia (Redmi Note 10 5G)";
+ui_print " [>] Kernel   : Linux 4.14.x";
+ui_print "==================================================";
 
-        sleep 2;
+sleep 2;
 
-        split_boot;
-        flash_boot;
-        flash_dtbo;
-        EOF_AK3
+split_boot;
+flash_boot;
+flash_dtbo;
+EOF_AK3
 
         # -----------------------------------------------------------------
         # BUILD ZIP & SHA256 DI ROOT WORKSPACE (..)
@@ -144,7 +146,7 @@ runs:
         echo "✅ Created SHA256 checksum: ${ZIP_NAME}.sha256"
 
         # -----------------------------------------------------------------
-        # GENERATE CHANGELOG & COMMIT LINK (PERBAIKAN DENGAN FALLBACK)
+        # GENERATE CHANGELOG & COMMIT LINK
         # -----------------------------------------------------------------
         if [ -d "kernel-source" ]; then
           cd kernel-source
