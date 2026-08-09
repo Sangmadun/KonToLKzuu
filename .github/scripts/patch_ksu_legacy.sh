@@ -2,7 +2,7 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script (Clean LSM Hook Fix)"
+echo "🔧 Running KernelSU Legacy Patch Script (Final Linker Fix)"
 echo "---------------------------------------"
 
 python3 << 'EOF'
@@ -11,11 +11,7 @@ import os, glob, re
 # ---------------------------------------------------------------------------
 # Header Kompatibilitas Global 
 # ---------------------------------------------------------------------------
-COMPAT_HEADERS = """
-#ifndef KSU_COMPAT_HEADERS_H
-#define KSU_COMPAT_HEADERS_H
-
-#include <linux/version.h>
+COMPAT_HEADERS = """#include <linux/version.h>
 #include <linux/types.h>
 #include <linux/poll.h>
 #include <linux/seccomp.h>
@@ -26,10 +22,6 @@ COMPAT_HEADERS = """
 #include <asm/unistd.h>
 #include <linux/uaccess.h>
 #include <linux/fs.h>
-#include <linux/syscalls.h>
-#include <linux/gfp.h>
-#include <asm/page.h>
-#include <linux/err.h>
 
 #ifndef __poll_t
 typedef unsigned int __poll_t;
@@ -91,57 +83,10 @@ typedef unsigned int __poll_t;
 #ifndef fsnotify_add_inode_mark
 #define fsnotify_add_inode_mark(mark, inode, allow_dups) fsnotify_add_mark(mark, inode, NULL, allow_dups)
 #endif
+#ifndef seccomp_filter_release
+#define seccomp_filter_release(task) do {} while (0)
 #endif
-
-/* Secure VFS Mounting Stubs for Legacy Kernels using d_path and KERNEL_DS */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-asmlinkage long sys_umount(char __user *name, int flags);
-extern long do_mount(const char *dev_name, const char __user *dir_name, const char *type_page, unsigned long flags, void *data_page);
-
-static inline int ksu_path_umount_compat(struct path *path, int flags) {
-    char *buf = (char *)__get_free_page(GFP_KERNEL);
-    char *mnt_path;
-    int err = -ENOMEM;
-    mm_segment_t old_fs;
-    if (!buf) return -ENOMEM;
-    mnt_path = d_path(path, buf, PAGE_SIZE);
-    if (!IS_ERR(mnt_path)) {
-        old_fs = get_fs();
-        set_fs(KERNEL_DS);
-        err = sys_umount((char __user *)mnt_path, flags);
-        set_fs(old_fs);
-    } else {
-        err = PTR_ERR(mnt_path);
-    }
-    free_page((unsigned long)buf);
-    return err;
-}
-
-static inline int ksu_path_mount_compat(const char *dev_name, struct path *path, const char *type_page, unsigned long flags, void *data_page) {
-    char *buf = (char *)__get_free_page(GFP_KERNEL);
-    char *mnt_path;
-    int err = -ENOMEM;
-    mm_segment_t old_fs;
-    if (!buf) return -ENOMEM;
-    mnt_path = d_path(path, buf, PAGE_SIZE);
-    if (!IS_ERR(mnt_path)) {
-        old_fs = get_fs();
-        set_fs(KERNEL_DS);
-        err = do_mount(dev_name, (const char __user *)mnt_path, type_page, flags, data_page);
-        set_fs(old_fs);
-    } else {
-        err = PTR_ERR(mnt_path);
-    }
-    free_page((unsigned long)buf);
-    return err;
-}
-
-#define path_mount(dev, path, type, flags, data) ksu_path_mount_compat(dev, path, type, flags, data)
-#define path_umount(path, flags) ksu_path_umount_compat(path, flags)
-
-#endif /* Kernel < 5.10 */
-
-#endif /* KSU_COMPAT_HEADERS_H */
+#endif
 /* KSU_COMPAT_MARKER */
 """
 
@@ -156,6 +101,7 @@ ALLOWED_MANAGER_HASHES = [
 ]
 
 def wrap_file_with_stubs(content, stub_code):
+    """ Membungkus file aslinya ke dalam blok #else, dan menaruh stub function di Kernel < 5.10 """
     marker = "/* KSU_COMPAT_MARKER */"
     if marker in content:
         pre, post = content.split(marker, 1)
@@ -181,6 +127,8 @@ def patch_kernel_su_sources():
         if not os.path.exists("include/linux/pgtable.h"):
             content = content.replace("<linux/pgtable.h>", "<asm/pgtable.h>")
 
+        # Terapkan fungsi wrapper universal ke semua file
+        content = patch_mount_umount_compat(content)
         content = apply_file_specific_patch(path, content)
 
         if content != original:
@@ -197,44 +145,35 @@ def apply_file_specific_patch(path, content):
             "typedef long (*syscall_fn_t)(const struct pt_regs *);\n#endif\n"
         ) + content
 
-    if "patch_memory" in name:
-        content = content.replace("__flush_icache_range", "flush_icache_range")
-        content = content.replace("__pte_to_phys", "pte_pfn")
-
     if "lsm_hook.c" in name:
-        # Penanganan khusus untuk Kernel < 5.10 pada lsm_hook.c tanpa merusak hlist global
-        lsm_compat = """
-#include <linux/version.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-#define ksu_hlist_head list_head
-#define ksu_hlist_node list_head
-#else
-#define ksu_hlist_head hlist_head
-#define ksu_hlist_node hlist_node
-#endif
-"""
-        content = lsm_compat + content
-        content = content.replace("struct hlist_head", "struct ksu_hlist_head")
-        content = content.replace("struct hlist_node", "struct ksu_hlist_node")
         content = content.replace("hook->list.head = head;", "hook->list.head = (void *)head;")
-        content = content.replace("hook->list.list.pprev", "((struct list_head *)&hook->list.list)->prev")
-        content = content.replace("hook->list.head->first", "((struct list_head *)hook->list.head)->next")
-
+        content = content.replace(
+            "hook->list.list.pprev = &head->first;",
+            "((struct hlist_node *)&hook->list.list)->pprev = &head->first;",
+        )
+        content = content.replace(
+            "&hook->list.head->first",
+            "&((struct hlist_head *)hook->list.head)->first"
+        )
+        # Fix untuk __compiletime_assert saat assign hook (Pointer Mismatch pada Kernel 4.14)
         compat_rcu = """
+#ifndef ksu_rcu_assign_pointer
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-#undef rcu_assign_pointer
-#define rcu_assign_pointer(p, v) do { smp_wmb(); WRITE_ONCE(p, v); } while (0)
+#define ksu_rcu_assign_pointer(p, v) WRITE_ONCE(p, v)
+#else
+#define ksu_rcu_assign_pointer(p, v) rcu_assign_pointer(p, v)
+#endif
 #endif
 """
         content = compat_rcu + content
         content = content.replace("rcu_assign_pointer(", "ksu_rcu_assign_pointer(")
 
     if "app_profile.c" in name:
-        content = re.sub(r"^.*seccomp\.filter_count.*$", r"// \g<0>", content, flags=re.MULTILINE)
-        content = re.sub(r"^.*void\s+seccomp_filter_release.*$", r"/* \g<0> */", content, flags=re.MULTILINE)
+        content = re.sub(r"([^\n]*seccomp\.filter_count[^\n]*)", r"// \1", content)
+        # Hapus deklarasi agar makro dari header bisa bekerja
         content = re.sub(
-            r"seccomp_filter_release\(([^)]+)\);",
-            r"#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\n    seccomp_filter_release(\1);\n#endif",
+            r"(void\s+seccomp_filter_release\s*\([^)]*\)\s*;)",
+            r"/* \1 */",
             content
         )
 
@@ -244,12 +183,14 @@ def apply_file_specific_patch(path, content):
     if "su_mount_ns.c" in name:
         content = patch_su_mount_ns(content)
 
+    # 1. PEMBUNGKUS STUBS: rules.c (Fix undefined ext_int_mutex)
     if "rules.c" in name and "KSU_RULES_STUBS" not in content:
         stub = """/* KSU_RULES_STUBS */
 void apply_kernelsu_rules(void) {}
 """
         content = wrap_file_with_stubs(content, stub)
 
+    # 2. PEMBUNGKUS STUBS: sepolicy.c (Fix missing SELinux rule injections)
     if "sepolicy.c" in name and "KSU_SEPOLICY_STUBS" not in content:
         stub = """/* KSU_SEPOLICY_STUBS */
 struct policydb;
@@ -258,7 +199,6 @@ bool ksu_sepolicy_init(void) { return true; }
 void ksu_sepolicy_exit(void) {}
 bool ksu_dup_sepolicy(struct selinux_policy *p) { return true; }
 void ksu_destroy_sepolicy(struct selinux_policy *p) {}
-int handle_sepolicy(unsigned long cmd, void *arg) { return 0; }
 bool ksu_type(struct policydb *db, const char *t) { return true; }
 bool ksu_attribute(struct policydb *db, const char *a) { return true; }
 bool ksu_typeattribute(struct policydb *db, const char *t, const char *a) { return true; }
@@ -278,6 +218,7 @@ bool ksu_auditallowxperm(struct policydb *db, const char *s, const char *t, cons
 """
         content = wrap_file_with_stubs(content, stub)
 
+    # 3. PEMBUNGKUS STUBS: selinux_hide.c
     if "selinux_hide.c" in name and "KSU_SELINUX_HIDE_STUBS" not in content:
         stub = """/* KSU_SELINUX_HIDE_STUBS */
 void ksu_selinux_hide_init(void) {}
@@ -288,23 +229,33 @@ void ksu_selinux_hide_handle_second_stage(void) {}
 """
         content = wrap_file_with_stubs(content, stub)
 
-    if "selinux" in name or "rules.c" in name:
-        content = patch_selinux_state_refs(content)
-
     if name in ("apk_sign.c", "apk_sign.h", "manager.c"):
         content = patch_manager_allowlist(content)
 
     return content
 
 def patch_su_mount_ns(content):
+    patch_setns = """
+#include <linux/version.h>
+#include <linux/syscalls.h>
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+static inline long ksu_sys_setns(int fd, int nstype) {
+    return sys_setns(fd, nstype);
+}
+#endif
+"""
+    if "ksu_sys_setns" not in content:
+        content = patch_setns + "\n" + content
+
     content = re.sub(
         r"extern\s+long\s+__arm64_sys_setns\s*\([^)]*\)\s*;",
         "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\nextern long __arm64_sys_setns(const struct pt_regs *regs);\n#endif",
         content
     )
     content = re.sub(
-        r"return\s+__arm64_sys_setns\s*\([^)]*\)\s*;",
-        "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n    return sys_setns(fd, flags);\n#else\n    return __arm64_sys_setns(&regs);\n#endif",
+        r"return\s+__arm64_sys_setns\s*\(&regs\)\s*;",
+        "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n    return ksu_sys_setns((int)fd, (int)flags);\n#else\n    return __arm64_sys_setns(&regs);\n#endif",
         content
     )
     return content
@@ -346,26 +297,21 @@ static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
     )
     return content
 
-def patch_selinux_state_refs(content):
-    header_patch = """
-#include <linux/version.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-#ifndef selinux_policy
-#define selinux_policy selinux_ss
-#endif
-#ifndef ext_int_mutex
-extern struct mutex ext_int_mutex;
-#endif
-#ifndef selinux_cred
-#define selinux_cred(cred) ((struct task_security_struct *)(cred)->security)
-#endif
-#endif
-"""
-    if "#ifndef selinux_policy" not in content:
-        content = header_patch + "\n" + content
-
-    content = re.sub(r"\bselinux_state\.policy\b", "selinux_state.ss", content)
-    content = re.sub(r"\bselinux_state\.policy_mutex\b", "ext_int_mutex", content)
+def patch_mount_umount_compat(content):
+    content = re.sub(r"\bpath_mount\b", "do_mount", content)
+    content = re.sub(r"\bpath_umount\b", "ksu_path_umount_compat", content)
+    
+    if "ksu_path_umount_compat" not in content:
+        content = (
+            "\n#include <linux/version.h>\n"
+            "#include <linux/fs.h>\n"
+            "#include <linux/syscalls.h>\n"
+            "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n"
+            "asmlinkage long sys_umount(char __user *name, int flags);\n"
+            "static inline int ksu_path_umount_compat(struct path *path, int flags) {\n"
+            "    return sys_umount((char __user *)path->dentry->d_name.name, flags);\n"
+            "}\n#endif\n"
+        ) + content
     return content
 
 def patch_manager_allowlist(content):
@@ -449,5 +395,5 @@ def patch_file_wrapper():
 
 patch_kernel_su_sources()
 patch_file_wrapper()
-print("✅ Patch KernelSU Legacy selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy (Full Linker Fix) selesai dilaksanakan!")
 EOF
