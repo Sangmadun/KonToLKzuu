@@ -2,20 +2,16 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script (Fix patch_memory icache)"
+echo "🔧 Running KernelSU Legacy Patch Script"
 echo "---------------------------------------"
 
 python3 << 'EOF'
 import os, glob, re
 
 # ---------------------------------------------------------------------------
-# Header Kompatibilitas Global dengan Include Guards
+# Compat headers injected once at the top of every touched file
 # ---------------------------------------------------------------------------
-COMPAT_HEADERS = """
-#ifndef KSU_COMPAT_HEADERS_H
-#define KSU_COMPAT_HEADERS_H
-
-#include <linux/version.h>
+COMPAT_HEADERS = """#include <linux/version.h>
 #include <linux/types.h>
 #include <linux/poll.h>
 #include <linux/seccomp.h>
@@ -26,7 +22,6 @@ COMPAT_HEADERS = """
 #include <asm/unistd.h>
 #include <linux/uaccess.h>
 #include <linux/fs.h>
-#include <linux/syscalls.h>
 
 #ifndef __poll_t
 typedef unsigned int __poll_t;
@@ -55,7 +50,7 @@ typedef unsigned int __poll_t;
 #define KERNEL_SU_VERSION_TAG "v1.0.0"
 #endif
 
-/* Compat API Memory & User Access Kernel < 5.8 */
+/* Fallback Symbol Compatibilities Kernel 4.14 */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
 #ifndef strncpy_from_user_nofault
 #define strncpy_from_user_nofault(dst, src, count) strncpy_from_user(dst, src, count)
@@ -66,12 +61,8 @@ typedef unsigned int __poll_t;
 #ifndef copy_to_kernel_nofault
 #define copy_to_kernel_nofault(dst, src, size) probe_kernel_write(dst, src, size)
 #endif
-#ifndef copy_to_user_nofault
-#define copy_to_user_nofault(dst, src, size) copy_to_user(dst, src, size)
-#endif
 #endif
 
-/* Compat System Call & VFS Kernel < 5.10 */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
 #ifndef ksys_close
 #define ksys_close sys_close
@@ -85,25 +76,13 @@ typedef unsigned int __poll_t;
 #ifndef security_inode_init_security_anon
 #define security_inode_init_security_anon(inode, qstr, anon) (0)
 #endif
-#ifndef fsnotify_add_inode_mark
-#define fsnotify_add_inode_mark(mark, inode, allow_dups) fsnotify_add_mark(mark, inode, NULL, allow_dups)
-#endif
 #ifndef seccomp_filter_release
 #define seccomp_filter_release(task) do {} while (0)
 #endif
-
-/* Inject path_umount & setns stubs securely */
-asmlinkage long sys_umount(char __user *name, int flags);
-static inline int ksu_path_umount_compat(struct path *path, int flags) {
-    return sys_umount((char __user *)path->dentry->d_name.name, flags);
-}
-static inline long ksu_sys_setns(int fd, int nstype) {
-    return sys_setns(fd, nstype);
-}
-#endif /* Kernel < 5.10 */
-
-#endif /* KSU_COMPAT_HEADERS_H */
-/* KSU_COMPAT_MARKER */
+#ifndef fsnotify_add_inode_mark
+#define fsnotify_add_inode_mark(mark, inode, allow_dups) fsnotify_add_mark(mark, inode, NULL, allow_dups)
+#endif
+#endif
 """
 
 SIMPLE_REPLACEMENTS = [
@@ -111,20 +90,22 @@ SIMPLE_REPLACEMENTS = [
     ("<linux/minmax.h>", "<linux/kernel.h>"),
 ]
 
+MOUNT_COMPAT_FILES = ("ksud.c", "sucompat.c", "allowlist.c", "kernel_compat.c")
+
 ALLOWED_MANAGER_HASHES = [
     "e885c3c1e2d671d18413e15091e9f138864f16a037803e48113c412e69888d3e",  # Official
     "3504179373d5778a486129a25b29b35a72064c0234a742f360e65383f98246cb",  # Next
 ]
 
-def wrap_file_with_stubs(content, stub_code):
-    marker = "/* KSU_COMPAT_MARKER */"
-    if marker in content:
-        pre, post = content.split(marker, 1)
-        return pre + marker + "\n#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n" + stub_code + "\n#else\n" + post + "\n#endif\n"
-    return content
+def guarded_stub(guard_lt, before):
+    pre = (
+        f"#include <linux/version.h>\n#include <linux/types.h>\n\n"
+        f"#if LINUX_VERSION_CODE < KERNEL_VERSION({guard_lt})\n{before}\n#else\n"
+    )
+    return pre, "\n#endif\n"
 
 # ---------------------------------------------------------------------------
-# Modifikasi Sumber Utama KernelSU
+# Main pass over drivers/kernelsu/**/*.[ch]
 # ---------------------------------------------------------------------------
 def patch_kernel_su_sources():
     for path in glob.glob("**/drivers/kernelsu/**/*.[ch]", recursive=True):
@@ -133,7 +114,7 @@ def patch_kernel_su_sources():
 
         original = content
 
-        if "KSU_COMPAT_MARKER" not in content:
+        if "#ifndef __poll_t" not in content:
             content = COMPAT_HEADERS + "\n" + content
 
         for old, new in SIMPLE_REPLACEMENTS:
@@ -142,7 +123,6 @@ def patch_kernel_su_sources():
         if not os.path.exists("include/linux/pgtable.h"):
             content = content.replace("<linux/pgtable.h>", "<asm/pgtable.h>")
 
-        content = patch_mount_umount_compat(content)
         content = apply_file_specific_patch(path, content)
 
         if content != original:
@@ -159,11 +139,6 @@ def apply_file_specific_patch(path, content):
             "typedef long (*syscall_fn_t)(const struct pt_regs *);\n#endif\n"
         ) + content
 
-    # BLOK INI YANG SEBELUMNYA TERHAPUS
-    if "patch_memory" in name:
-        content = content.replace("__flush_icache_range", "flush_icache_range")
-        content = content.replace("__pte_to_phys", "pte_pfn")
-
     if "lsm_hook.c" in name:
         content = content.replace("hook->list.head = head;", "hook->list.head = (void *)head;")
         content = content.replace(
@@ -174,96 +149,44 @@ def apply_file_specific_patch(path, content):
             "&hook->list.head->first",
             "&((struct hlist_head *)hook->list.head)->first"
         )
-        
-        compat_rcu = """
-#include <linux/version.h>
-#ifndef ksu_rcu_assign_pointer
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-#define ksu_rcu_assign_pointer(p, v) WRITE_ONCE(p, v)
-#else
-#define ksu_rcu_assign_pointer(p, v) rcu_assign_pointer(p, v)
-#endif
-#endif
-"""
-        content = compat_rcu + content
-        content = content.replace("rcu_assign_pointer(", "ksu_rcu_assign_pointer(")
+
+    if "patch_memory" in name:
+        content = content.replace("__flush_icache_range", "flush_icache_range")
+        content = content.replace("__pte_to_phys", "pte_pfn")
 
     if "app_profile.c" in name:
         content = re.sub(r"([^\n]*seccomp\.filter_count[^\n]*)", r"// \1", content)
-        content = re.sub(
-            r"(void\s+seccomp_filter_release\s*\([^)]*\)\s*;)",
-            r"/* \1 */",
-            content
-        )
 
     if "pkg_observer.c" in name:
         content = patch_pkg_observer(content)
 
-    if "su_mount_ns.c" in name:
-        content = patch_su_mount_ns(content)
-
-    if "rules.c" in name and "KSU_RULES_STUBS" not in content:
-        stub = """/* KSU_RULES_STUBS */
-void apply_kernelsu_rules(void) {}
-"""
-        content = wrap_file_with_stubs(content, stub)
-
-    if "sepolicy.c" in name and "KSU_SEPOLICY_STUBS" not in content:
-        stub = """/* KSU_SEPOLICY_STUBS */
-struct policydb;
-struct selinux_policy;
-bool ksu_sepolicy_init(void) { return true; }
-void ksu_sepolicy_exit(void) {}
-bool ksu_dup_sepolicy(struct selinux_policy *p) { return true; }
-void ksu_destroy_sepolicy(struct selinux_policy *p) {}
-bool ksu_type(struct policydb *db, const char *t) { return true; }
-bool ksu_attribute(struct policydb *db, const char *a) { return true; }
-bool ksu_typeattribute(struct policydb *db, const char *t, const char *a) { return true; }
-bool ksu_permissive(struct policydb *db, const char *t) { return true; }
-bool ksu_allow(struct policydb *db, const char *s, const char *t, const char *c, const char *p) { return true; }
-bool ksu_allowxperm(struct policydb *db, const char *s, const char *t, const char *c, u16 spec, u32 pmin, u32 pmax) { return true; }
-bool ksu_type_transition(struct policydb *db, const char *s, const char *t, const char *c, const char *d) { return true; }
-bool ksu_type_change(struct policydb *db, const char *s, const char *t, const char *c, const char *d) { return true; }
-bool ksu_deny(struct policydb *db, const char *s, const char *t, const char *c, const char *p) { return true; }
-bool ksu_enforce(struct policydb *db, const char *t) { return true; }
-bool ksu_type_member(struct policydb *db, const char *s, const char *t, const char *c, const char *d) { return true; }
-bool ksu_genfscon(struct policydb *db, const char *fs, const char *path, const char *ctx) { return true; }
-bool ksu_auditallow(struct policydb *db, const char *s, const char *t, const char *c, const char *p) { return true; }
-bool ksu_dontaudit(struct policydb *db, const char *s, const char *t, const char *c, const char *p) { return true; }
-bool ksu_dontauditxperm(struct policydb *db, const char *s, const char *t, const char *c, u16 spec, u32 pmin, u32 pmax) { return true; }
-bool ksu_auditallowxperm(struct policydb *db, const char *s, const char *t, const char *c, u16 spec, u32 pmin, u32 pmax) { return true; }
-"""
-        content = wrap_file_with_stubs(content, stub)
-
-    if "selinux_hide.c" in name and "KSU_SELINUX_HIDE_STUBS" not in content:
-        stub = """/* KSU_SELINUX_HIDE_STUBS */
-void ksu_selinux_hide_init(void) {}
-void ksu_selinux_hide_exit(void) {}
-void ksu_selinux_hide_handle_post_fs_data(void) {}
-void ksu_selinux_hide_drop_backup_if_unused(void) {}
-void ksu_selinux_hide_handle_second_stage(void) {}
-"""
-        content = wrap_file_with_stubs(content, stub)
-
-    if "selinux" in name or "rules.c" in name:
+    if "selinux" in name:
         content = patch_selinux_state_refs(content)
+
+    if "sepolicy.c" in name and "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)" not in content:
+        pre, post = guarded_stub(
+            "5, 10, 0",
+            "bool ksu_sepolicy_init(void) { return true; }\nvoid ksu_sepolicy_exit(void) {}",
+        )
+        content = pre + content + post
+
+    if "selinux_hide.c" in name and "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)" not in content:
+        pre, post = guarded_stub(
+            "5, 10, 0",
+            "void ksu_selinux_hide_init(void) {}\n"
+            "void ksu_selinux_hide_exit(void) {}\n"
+            "void ksu_selinux_hide_handle_post_fs_data(void) {}\n"
+            "void ksu_selinux_hide_drop_backup_if_unused(void) {}\n"
+            "void ksu_selinux_hide_handle_second_stage(void) {}",
+        )
+        content = pre + content + post
+
+    if name in MOUNT_COMPAT_FILES:
+        content = patch_mount_umount_compat(content)
 
     if name in ("apk_sign.c", "apk_sign.h", "manager.c"):
         content = patch_manager_allowlist(content)
 
-    return content
-
-def patch_su_mount_ns(content):
-    content = re.sub(
-        r"extern\s+long\s+__arm64_sys_setns\s*\([^)]*\)\s*;",
-        "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\nextern long __arm64_sys_setns(const struct pt_regs *regs);\n#endif",
-        content
-    )
-    content = re.sub(
-        r"return\s+__arm64_sys_setns\s*\(&regs\)\s*;",
-        "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n    return ksu_sys_setns((int)fd, (int)flags);\n#else\n    return __arm64_sys_setns(&regs);\n#endif",
-        content
-    )
     return content
 
 def patch_pkg_observer(content):
@@ -303,31 +226,33 @@ static int ksu_handle_event(struct fsnotify_group *group, struct inode *to_tell,
     )
     return content
 
+def patch_selinux_state_refs(content):
+    if "#ifndef selinux_policy" not in content:
+        content = (
+            "#include <linux/version.h>\n"
+            "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n"
+            "#ifndef selinux_policy\n#define selinux_policy selinux_ss\n#endif\n"
+            "#ifndef ext_int_mutex\nextern struct mutex ext_int_mutex;\n#endif\n"
+            "#endif\n"
+        ) + "\n" + content
+    content = re.sub(r"\bselinux_state\.policy\b", "selinux_state.ss", content)
+    content = re.sub(r"selinux_state\.policy_mutex", "ext_int_mutex", content)
+    return content
+
 def patch_mount_umount_compat(content):
     content = re.sub(r"\bpath_mount\b", "do_mount", content)
     content = re.sub(r"\bpath_umount\b", "ksu_path_umount_compat", content)
-    return content
-
-def patch_selinux_state_refs(content):
-    header_patch = """
-#include <linux/version.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-#ifndef selinux_policy
-#define selinux_policy selinux_ss
-#endif
-#ifndef ext_int_mutex
-extern struct mutex ext_int_mutex;
-#endif
-#ifndef selinux_cred
-#define selinux_cred(cred) ((struct task_security_struct *)(cred)->security)
-#endif
-#endif
-"""
-    if "#ifndef selinux_policy" not in content:
-        content = header_patch + "\n" + content
-
-    content = re.sub(r"\bselinux_state\.policy\b", "selinux_state.ss", content)
-    content = re.sub(r"\bselinux_state\.policy_mutex\b", "ext_int_mutex", content)
+    if "ksu_path_umount_compat" not in content:
+        content = (
+            "\n#include <linux/version.h>\n"
+            "#include <linux/fs.h>\n"
+            "#include <linux/syscalls.h>\n"
+            "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n"
+            "asmlinkage long sys_umount(char __user *name, int flags);\n"
+            "static inline int ksu_path_umount_compat(struct path *path, int flags) {\n"
+            "    return sys_umount((char __user *)path->dentry->d_name.name, flags);\n"
+            "}\n#endif\n"
+        ) + content
     return content
 
 def patch_manager_allowlist(content):
@@ -350,6 +275,7 @@ bool ksu_is_manager_apk(const char *hash) {{
     return false;
 }}
 """
+    # Replace entire ksu_is_manager_apk function body matching up to the closing brace
     return re.sub(
         r"bool\s+ksu_is_manager_apk\s*\([^)]*\)\s*\{[\s\S]*?\n\}",
         replacement.strip(),
@@ -357,7 +283,7 @@ bool ksu_is_manager_apk(const char *hash) {{
     )
 
 # ---------------------------------------------------------------------------
-# Patch khusus file_wrapper.c
+# file_wrapper.c: disable unsupported VFS ops (iopoll/remap/fadvise) + selinux_inode
 # ---------------------------------------------------------------------------
 def patch_file_wrapper():
     for path in glob.glob("**/drivers/kernelsu/infra/file_wrapper.c", recursive=True):
@@ -370,6 +296,7 @@ def patch_file_wrapper():
                 "#ifndef REMAP_FILE_DEDUP\n#define REMAP_FILE_DEDUP 0\n#endif\n"
             ) + code
 
+        # Correct replacement for SELinux inode security struct in Kernel 4.14
         code = re.sub(
             r"selinux_inode\(([^)]+)\)",
             r"((struct inode_security_struct *)(\1)->i_security)",
@@ -411,5 +338,5 @@ def patch_file_wrapper():
 
 patch_kernel_su_sources()
 patch_file_wrapper()
-print("✅ Patch KernelSU Legacy selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy, Linker Fix, & Multi-Manager selesai dilaksanakan!")
 EOF
