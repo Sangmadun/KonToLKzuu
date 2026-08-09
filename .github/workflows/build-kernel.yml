@@ -28,21 +28,27 @@ on:
       include_lto_o3:
         required: false
         type: boolean
+        default: false
       include_wireguard:
         required: false
         type: boolean
+        default: false
       include_f2fs:
         required: false
         type: boolean
+        default: false
       include_zstd:
         required: false
         type: boolean
+        default: false
       include_bbr:
         required: false
         type: boolean
+        default: false
       include_ttl:
         required: false
         type: boolean
+        default: false
     secrets:
       TELEGRAM_TOKEN:
         required: false
@@ -116,7 +122,7 @@ jobs:
 
       - name: Patch KernelSU Hook & Legacy Headers
         run: bash .github/scripts/patch_ksu_legacy.sh
-        
+
       - name: Apply SUSFS Patch & Configs
         if: inputs.include_susfs == true
         uses: ./.github/actions/apply-susfs
@@ -154,13 +160,6 @@ jobs:
           include_susfs: ${{ inputs.include_susfs }}
           include_bbg: ${{ inputs.include_bbg }}
           include_bbr: ${{ inputs.include_bbr }}
-
-      - name: Debug Workspace Files
-        run: |
-          echo "📂 File di Root Workspace:"
-          ls -la
-          echo "📂 File di AnyKernel3:"
-          ls -la AnyKernel3/ || true
 
       - name: Upload Kernel Release Assets
         uses: actions/upload-artifact@v4
@@ -230,8 +229,6 @@ jobs:
         (inputs.build_target == 'manager_only' && needs.build-manager.result == 'success')
       )
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout Repository
@@ -248,16 +245,20 @@ jobs:
           DATE_TAG=$(date +'%Y%m%d-%H%M')
           echo "DATE_TAG=$DATE_TAG" >> $GITHUB_ENV
 
-          # Rename Manager APK
+          # Rename Manager APK (prioritaskan varian arm64-v8a jika ada)
           KSU_ENGINE="${{ inputs.ksu_fork }}"
           [ -z "$KSU_ENGINE" ] && KSU_ENGINE="KernelSU"
-          TARGET_APK=$(find release_assets -type f -name "*arm64-v8a*.apk" -o -name "*.apk" | head -n 1)
+
+          TARGET_APK=$(find release_assets -type f -name "*arm64-v8a*.apk" | sort | head -n 1)
+          if [ -z "$TARGET_APK" ]; then
+            TARGET_APK=$(find release_assets -type f -name "*.apk" | sort | head -n 1)
+          fi
           if [ -n "$TARGET_APK" ]; then
             mv "$TARGET_APK" "$(dirname "$TARGET_APK")/${KSU_ENGINE}_Manager.apk"
           fi
 
           # Read Metadata
-          ZIP_FILE=$(find release_assets -type f -name "*.zip" | head -n 1)
+          ZIP_FILE=$(find release_assets -type f -name "*.zip" | sort | head -n 1)
           [ -n "$ZIP_FILE" ] && echo "RELEASE_TITLE=Lotus Kernel - $(basename "$ZIP_FILE")" >> $GITHUB_ENV
 
       - name: Auto-Create GitHub Release
