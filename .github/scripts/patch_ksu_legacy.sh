@@ -338,18 +338,18 @@ def patch_manager_allowlist(content):
     hash_list = ",\n    ".join(f'"{h}"' for h in ALLOWED_MANAGER_HASHES)
     replacement = f"""
 /* MULTI_MANAGER_PATCHED */
-static const char *ksu_allowed_manager_hashes[] = {
+static const char *ksu_allowed_manager_hashes[] = {{
     {hash_list},
     NULL
-};
+}};
 
-bool ksu_is_manager_apk(const char *hash) {
+bool ksu_is_manager_apk(const char *hash) {{
     if (!hash) return false;
-    for (int i = 0; ksu_allowed_manager_hashes[i] != NULL; i++) {
+    for (int i = 0; ksu_allowed_manager_hashes[i] != NULL; i++) {{
         if (strcasecmp(hash, ksu_allowed_manager_hashes[i]) == 0) return true;
-    }
+    }}
     return false;
-}
+}}
 """
     return re.sub(
         r"bool\s+ksu_is_manager_apk\s*\([^)]*\)\s*\{[\s\S]*?\n\}",
