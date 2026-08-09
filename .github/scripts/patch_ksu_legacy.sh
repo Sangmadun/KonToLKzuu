@@ -2,7 +2,7 @@
 set -e
 
 echo "---------------------------------------"
-echo "🔧 Running KernelSU Legacy Patch Script (Final Linker & RCU Fix)"
+echo "🔧 Running KernelSU Legacy Patch Script (LSM Hook hlist to list Fix)"
 echo "---------------------------------------"
 
 python3 << 'EOF'
@@ -202,19 +202,27 @@ def apply_file_specific_patch(path, content):
         content = content.replace("__pte_to_phys", "pte_pfn")
 
     if "lsm_hook.c" in name:
-        # Bypassing RCU macro's strict type assertions (which causes __compiletime_assert undefined symbol in ld.lld)
-        compat_rcu = """
+        # Pemetaan hlist_head/hlist_node ke list_head untuk Kernel < 5.10
+        lsm_compat = """
 #include <linux/version.h>
-#ifndef ksu_rcu_assign_pointer
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-#define ksu_rcu_assign_pointer(p, v) do { smp_wmb(); WRITE_ONCE(p, v); } while (0)
-#else
-#define ksu_rcu_assign_pointer(p, v) rcu_assign_pointer(p, v)
+#undef hlist_head
+#undef hlist_node
+#define hlist_head list_head
+#define hlist_node list_head
+#define first next
+#define pprev prev
 #endif
+"""
+        content = lsm_compat + content
+
+        compat_rcu = """
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#undef rcu_assign_pointer
+#define rcu_assign_pointer(p, v) do { smp_wmb(); WRITE_ONCE(p, v); } while (0)
 #endif
 """
         content = compat_rcu + content
-        # Mengganti pemanggilan rcu_assign_pointer murni dengan milik ksu
         content = content.replace("rcu_assign_pointer(", "ksu_rcu_assign_pointer(")
 
     if "app_profile.c" in name:
@@ -437,5 +445,5 @@ def patch_file_wrapper():
 
 patch_kernel_su_sources()
 patch_file_wrapper()
-print("✅ Patch KernelSU Legacy selesai dilaksanakan!")
+print("✅ Patch KernelSU Legacy (LSM Hook hlist mapping) selesai dilaksanakan!")
 EOF
