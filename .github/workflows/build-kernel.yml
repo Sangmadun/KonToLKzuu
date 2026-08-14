@@ -132,6 +132,21 @@ jobs:
             sed -i '/^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES=/d' "$DC"
             echo "=== APPENDED_DTB state after patch ==="
             grep -nE 'APPENDED_DTB' "$DC" || true
+
+            # ReSukiSU selinux_hide.c falls back to extern references of static selinuxfs
+            # symbols (sel_handle_status_ops, write_op) when CONFIG_KALLSYMS_ALL is off,
+            # which breaks final link on 4.14. Enable KALLSYMS_ALL so KSU uses its runtime
+            # kallsyms lookup path. Also un-static the two symbols as belt-and-braces.
+            if ! grep -q '^CONFIG_KALLSYMS_ALL=y' "$DC"; then
+              echo 'CONFIG_KALLSYMS_ALL=y' >> "$DC"
+            fi
+            echo "=== KALLSYMS state after patch ==="
+            grep -nE 'KALLSYMS' "$DC" || true
+
+            sed -i 's/^static const struct file_operations sel_handle_status_ops/const struct file_operations sel_handle_status_ops/' security/selinux/selinuxfs.c
+            sed -i 's/^static ssize_t (\*write_op\[\])/ssize_t (*write_op[])/' security/selinux/selinuxfs.c
+            echo "=== selinuxfs symbol visibility after patch ==="
+            grep -n 'sel_handle_status_ops =\|write_op\[\]' security/selinux/selinuxfs.c || true
           else
             echo "::error::Defconfig $DC not found"
             exit 1
