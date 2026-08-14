@@ -83,7 +83,8 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Select Defconfig per Manifest
-        run: echo "Manifest=${{ inputs.manifest_name }} -> Active defconfig: ${KERNEL_DEFCONFIG}"
+        run: |
+          echo "Manifest=${{ inputs.manifest_name }} -> Active defconfig: ${KERNEL_DEFCONFIG}"
 
       - name: Send Telegram Start Notification
         env:
