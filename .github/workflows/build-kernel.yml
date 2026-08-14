@@ -82,6 +82,15 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Select Defconfig per Manifest
+        run: |
+          case "${{ inputs.manifest_name }}" in
+            cristidclxvi)
+              echo "KERNEL_DEFCONFIG=camellian_id_defconfig" >> "$GITHUB_ENV"
+              ;;
+          esac
+          echo "Active defconfig: ${KERNEL_DEFCONFIG}"
+
       - name: Send Telegram Start Notification
         env:
           TELEGRAM_TOKEN: "${{ secrets.TELEGRAM_TOKEN }}"
