@@ -64,7 +64,7 @@ jobs:
 
     env:
       ARCH: "arm64"
-      KERNEL_DEFCONFIG: "camellia_defconfig"
+      KERNEL_DEFCONFIG: ${{ inputs.manifest_name == 'cristidclxvi' && 'camellian_id_defconfig' || 'camellia_defconfig' }}
 
     steps:
       - name: Maximize Build Space
@@ -83,13 +83,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Select Defconfig per Manifest
-        run: |
-          case "${{ inputs.manifest_name }}" in
-            cristidclxvi)
-              echo "KERNEL_DEFCONFIG=camellian_id_defconfig" >> "$GITHUB_ENV"
-              ;;
-          esac
-          echo "Active defconfig: ${KERNEL_DEFCONFIG}"
+        run: echo "Manifest=${{ inputs.manifest_name }} -> Active defconfig: ${KERNEL_DEFCONFIG}"
 
       - name: Send Telegram Start Notification
         env:
