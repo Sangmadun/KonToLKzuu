@@ -123,6 +123,15 @@ jobs:
             sed -i 's|^CONFIG_MILLET=y$|# CONFIG_MILLET is not set|' "$DC"
             echo "=== MILLET/MIHW state after patch ==="
             grep -nE 'MILLET|MIHW' "$DC" || true
+
+            # camellian.dts includes Xiaomi-proprietary <camellian/cust.dtsi> (never published),
+            # so building mediatek/camellian.dtb fails. The author's own camellian_gl_defconfig
+            # disables APPENDED_DTB and boots with the stock/prebuilt dtb. Mirror that:
+            # build a plain Image.gz and skip the DTB build entirely.
+            sed -i 's|^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y$|# CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE is not set|' "$DC"
+            sed -i '/^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES=/d' "$DC"
+            echo "=== APPENDED_DTB state after patch ==="
+            grep -nE 'APPENDED_DTB' "$DC" || true
           else
             echo "::error::Defconfig $DC not found"
             exit 1
