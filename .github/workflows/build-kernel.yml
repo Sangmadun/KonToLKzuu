@@ -113,6 +113,21 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash .github/scripts/sync_source.sh "${{ inputs.manifest_name }}"
 
+      - name: Patch Defconfig for cristidclxvi Source
+        if: inputs.manifest_name == 'cristidclxvi'
+        run: |
+          DC="kernel-source/arch/arm64/configs/camellian_id_defconfig"
+          if [ -f "$DC" ]; then
+            # MILLET points at vendor/xiaomi/kernel_modules/mihw/millet/ which Xiaomi never published.
+            # Author's own camellian_gl_defconfig disables it; do the same for the ID variant.
+            sed -i 's|^CONFIG_MILLET=y$|# CONFIG_MILLET is not set|' "$DC"
+            echo "=== MILLET/MIHW state after patch ==="
+            grep -nE 'MILLET|MIHW' "$DC" || true
+          else
+            echo "::error::Defconfig $DC not found"
+            exit 1
+          fi
+
       - name: Setup KSU Fork
         uses: ./.github/actions/setup-ksu
         with:
