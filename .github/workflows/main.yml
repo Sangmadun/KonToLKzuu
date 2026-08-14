@@ -34,6 +34,7 @@ on:
           - lotus-test
           - vortex-v1
           - vortex-test
+          - cristidclxvi
       include_susfs:
         description: 'Include SUSFS (Kernel Anti-Detection)'
         required: true
