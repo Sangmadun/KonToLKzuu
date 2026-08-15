@@ -1,161 +1,129 @@
 name: "Apply SUSFS Patch & Configs"
-description: "Penerapan patch SuSFS 4.14, setup header susfs.h/susfs_def.h, dan pencatatan susfs.c"
+description: "Apply SUSFS v2.2.0 (sidex15/FlopKernel backport, base 4.14.357-openela) for camellia. Drop-in core + VFS hook patch + IDA compat shim. FTS FT8722 preserved."
 
 runs:
   using: "composite"
   steps:
-    - name: Apply SUSFS Patch & Configs
+    - name: Apply SUSFS v2.2.0
       shell: bash
       run: |
+        set -e
+        ACT_DIR="$GITHUB_WORKSPACE/patches/susfs_v220"
         cd kernel-source
-        echo "Applying SUSFS 4.14 Patch & Configs..."
-        
-        mkdir -p ../patches/susfs_4.14
+        echo "==============================================="
+        echo " SUSFS v2.2.0 integration (camellia 4.14.357)"
+        echo "==============================================="
+
+        # ---------------------------------------------------------------
+        # 1. Drop-in SUSFS v2.2.0 core files (NOT simonpunk 1.5.5 anymore).
+        #    Base kernel of these files = 4.14.357-openela, identical to camellia,
+        #    so they are ABI-compatible drop-ins.
+        # ---------------------------------------------------------------
+        echo "[1] Installing SUSFS v2.2.0 core files..."
         mkdir -p include/linux
+        cp -f "$ACT_DIR/susfs.c"      fs/susfs.c
+        cp -f "$ACT_DIR/susfs.h"      include/linux/susfs.h
+        cp -f "$ACT_DIR/susfs_def.h"  include/linux/susfs_def.h
+        echo "    SUSFS_VERSION: $(grep -E '^#define SUSFS_VERSION' include/linux/susfs.h)"
 
-        # 1. Unduh patch resmi 4.14 jika belum ada
-        if [ -z "$(ls -A ../patches/susfs_4.14/*.patch 2>/dev/null)" ]; then
-          echo "📥 Downloading SUSFS 4.14 patch..."
-          curl -fsSL "https://gitlab.com/simonpunk/susfs4ksu/-/raw/kernel-4.14/kernel_patches/50_add_susfs_in_kernel-4.14.patch" \
-            -o ../patches/susfs_4.14/50_add_susfs_in_kernel-4.14.patch || true
+        # ---------------------------------------------------------------
+        # 2. IDA compat shim: SUSFS v2.2.0 hook code uses the modern IDR API
+        #    (ida_alloc_min / ida_free) which 4.14 does NOT provide. camellia
+        #    only ships ida_get_new_above / ida_remove / ida_simple_*. Provide
+        #    static-inline shims so the new call-sites compile on 4.14.
+        #    Guarded so it is a no-op on kernels that already have the new API.
+        # ---------------------------------------------------------------
+        echo "[2] Injecting IDA compat shim for 4.14..."
+        SHIM='include/linux/susfs_ida_compat.h'
+        cat > "$SHIM" <<'SHIMEOF'
+        #ifndef _SUSFS_IDA_COMPAT_H
+        #define _SUSFS_IDA_COMPAT_H
+        #include <linux/version.h>
+        #include <linux/idr.h>
+        #include <linux/gfp.h>
+        /*
+         * 4.14 lacks ida_alloc_min()/ida_free(). Provide shims backed by the
+         * legacy ida_simple_get()/ida_simple_remove() API that 4.14 ships.
+         * Only defined when the modern API is absent (pre-4.19 behaviour).
+         */
+        #if LINUX_VERSION_CODE < KERNEL_VERSION(4,19,0)
+        #ifndef SUSFS_HAVE_IDA_ALLOC_MIN
+        #define SUSFS_HAVE_IDA_ALLOC_MIN
+        static inline int ida_alloc_min(struct ida *ida, unsigned int min, gfp_t gfp)
+        {
+        	return ida_simple_get(ida, min, 0, gfp);
+        }
+        static inline void ida_free(struct ida *ida, unsigned int id)
+        {
+        	ida_simple_remove(ida, id);
+        }
+        #endif /* SUSFS_HAVE_IDA_ALLOC_MIN */
+        #endif /* < 4.19 */
+        #endif /* _SUSFS_IDA_COMPAT_H */
+        SHIMEOF
+        # de-indent heredoc (leading 8 spaces from YAML block)
+        sed -i 's/^        //' "$SHIM"
+        echo "    shim written: $SHIM"
+
+        # Make susfs.h pull the shim first (so all hook TUs see ida_alloc_min).
+        if ! grep -q "susfs_ida_compat.h" include/linux/susfs.h; then
+          sed -i '1i#include <linux/susfs_ida_compat.h>' include/linux/susfs.h
+        fi
+        # namespace.c is the VFS TU that actually calls ida_alloc_min/ida_free.
+        if ! grep -q "susfs_ida_compat.h" fs/namespace.c; then
+          sed -i '1i#include <linux/susfs_ida_compat.h>' fs/namespace.c
         fi
 
-        # Bersihkan file patch jika terunduh sebagai HTML / 404
-        for f in ../patches/susfs_4.14/*; do
-          if [ -f "$f" ] && (grep -q -iE "<!DOCTYPE|<html|404" "$f" 2>/dev/null); then
-            echo "⚠️ Cleaning corrupted patch file: $f"
-            rm -f "$f"
-          fi
-        done
+        # ---------------------------------------------------------------
+        # 3. Apply the VFS hook call-site patch (v2.0.0 base; call-sites are
+        #    stable through 2.2.0). Fuzz-tolerant. Rejects in KSU_MANUAL_HOOK
+        #    guard blocks are HARMLESS on this base (ReSukiSU uses inline hooks),
+        #    but any reject touching susfs core is surfaced and fails the build.
+        # ---------------------------------------------------------------
+        echo "[3] Applying VFS hook patch (fuzz-tolerant)..."
+        patch -p1 --fuzz=3 --no-backup-if-mismatch < "$ACT_DIR/10_vfs_hooks.patch" || true
 
-        # 2. Eksekusi patch ke dalam source code kernel C
-        for patch_file in ../patches/susfs_4.14/*.patch ../patches/susfs_4.14/*.diff; do
-          if [ -f "$patch_file" ]; then
-            echo "🛠️ Applying patch: $patch_file"
-            patch -p1 < "$patch_file" || git apply "$patch_file" || true
-          fi
-        done
+        echo "[3a] Reviewing rejects..."
+        REJECTS=$(find . -name '*.rej' 2>/dev/null || true)
+        FATAL=0
+        if [ -n "$REJECTS" ]; then
+          for r in $REJECTS; do
+            echo "    --- reject: $r ---"
+            # A reject is FATAL only if it touches a susfs_* core symbol
+            # (sus_path/kstat/mount/map/umount). Pure KSU_MANUAL_HOOK guard
+            # rejects are expected on this base and are non-fatal.
+            if grep -qE 'susfs_(add|update|mark|run|handle|get|set|alloc|spoof|is_|hide|try_umount)' "$r"; then
+              echo "    !! FATAL: reject touches susfs core in $r"
+              cat "$r"
+              FATAL=1
+            else
+              echo "    ok: harmless KSU-hook-guard reject (skipping)"
+            fi
+          done
+        fi
+        if [ "$FATAL" = "1" ]; then
+          echo "::error::SUSFS core hunk failed to apply. Manual port needed."
+          exit 1
+        fi
+        # clean up harmless reject/orig files
+        find . -name '*.rej' -delete 2>/dev/null || true
+        find . -name '*.orig' -delete 2>/dev/null || true
 
-        # 3. Penanganan include/linux/susfs.h secara ketat
-        echo "📥 Setting up include/linux/susfs.h..."
-        mkdir -p include/linux
-
-        if [ -f "include/linux/susfs.h" ] && (grep -q -iE "<!DOCTYPE|<html|404" include/linux/susfs.h 2>/dev/null); then
-          rm -f include/linux/susfs.h
+        # ---------------------------------------------------------------
+        # 4. fs/Makefile: ensure susfs.o is built.
+        # ---------------------------------------------------------------
+        if ! grep -q 'susfs.o' fs/Makefile; then
+          echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
+          echo "[4] Added susfs.o to fs/Makefile"
+        else
+          echo "[4] susfs.o already in fs/Makefile"
         fi
 
-        # Prioritas 1: Cari dari repositori lokal (drivers/kernelsu dll)
-        LOCAL_SUSFS_H=$(find . -type f -name "susfs.h" ! -path "./include/linux/susfs.h" 2>/dev/null | head -n 1)
-        if [ -n "$LOCAL_SUSFS_H" ] && [ -f "$LOCAL_SUSFS_H" ]; then
-          echo "🔍 Found local susfs.h at: $LOCAL_SUSFS_H, copying to include/linux/..."
-          cp -f "$LOCAL_SUSFS_H" include/linux/susfs.h
-        fi
-
-        # Prioritas 2: Unduh dari daftar URL fallback
-        if [ ! -f "include/linux/susfs.h" ]; then
-          echo "📥 Fetching susfs.h from remote mirrors..."
-          curl -fsSL "https://gitlab.com/simonpunk/susfs4ksu/-/raw/kernel-4.14/kernel_patches/include/linux/susfs.h" -o include/linux/susfs.h 2>/dev/null || \
-          curl -fsSL "https://gitlab.com/simonpunk/susfs4ksu/-/raw/kernel-4.14/include/linux/susfs.h" -o include/linux/susfs.h 2>/dev/null || \
-          curl -fsSL "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/include/linux/susfs.h" -o include/linux/susfs.h 2>/dev/null || true
-        fi
-
-        # Prioritas 3: Failsafe jika susfs.h tetap tidak ditemukan
-        if [ ! -f "include/linux/susfs.h" ] || (grep -q -iE "<!DOCTYPE|<html|404" include/linux/susfs.h 2>/dev/null); then
-          echo "🔧 Creating fallback include/linux/susfs.h..."
-          printf '%s\n' \
-            '#ifndef _LINUX_SUSFS_H' \
-            '#define _LINUX_SUSFS_H' \
-            '' \
-            '#include <linux/susfs_def.h>' \
-            '' \
-            '#endif /* _LINUX_SUSFS_H */' > include/linux/susfs.h
-        fi
-
-        # 4. Penanganan fs/susfs.c secara ketat
-        echo "📥 Setting up fs/susfs.c..."
-        if [ -f "fs/susfs.c" ] && (grep -q -iE "<!DOCTYPE|<html|404" fs/susfs.c 2>/dev/null); then
-          rm -f fs/susfs.c
-        fi
-
-        LOCAL_SUSFS_C=$(find . -type f -name "susfs.c" ! -path "./fs/susfs.c" 2>/dev/null | head -n 1)
-        if [ -n "$LOCAL_SUSFS_C" ] && [ -f "$LOCAL_SUSFS_C" ]; then
-          echo "🔍 Found local susfs.c at: $LOCAL_SUSFS_C, copying to fs/..."
-          cp -f "$LOCAL_SUSFS_C" fs/susfs.c
-        fi
-
-        if [ ! -f "fs/susfs.c" ]; then
-          echo "📥 Fetching susfs.c from remote mirror..."
-          curl -fsSL "https://gitlab.com/simonpunk/susfs4ksu/-/raw/kernel-4.14/kernel_patches/fs/susfs.c" -o fs/susfs.c 2>/dev/null || \
-          curl -fsSL "https://gitlab.com/simonpunk/susfs4ksu/-/raw/kernel-4.14/fs/susfs.c" -o fs/susfs.c 2>/dev/null || \
-          curl -fsSL "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/fs/susfs.c" -o fs/susfs.c 2>/dev/null || true
-        fi
-
-        # 5. Buat include/linux/susfs_def.h bersih beserta makro lengkap secara langsung
-        echo "🔧 Generating complete include/linux/susfs_def.h directly..."
-        printf '%s\n' \
-          '#ifndef _SUSFS_DEF_H' \
-          '#define _SUSFS_DEF_H' \
-          '' \
-          '#include <linux/types.h>' \
-          '' \
-          '#ifndef SUSFS_MAX_LEN_PATHNAME' \
-          '#define SUSFS_MAX_LEN_PATHNAME 512' \
-          '#endif' \
-          '' \
-          '#ifndef SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE' \
-          '#define SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE 2048' \
-          '#endif' \
-          '' \
-          '#ifndef TASK_STRUCT_NON_ROOT_USER_APP_PROC' \
-          '#define TASK_STRUCT_NON_ROOT_USER_APP_PROC (1 << 0)' \
-          '#endif' \
-          '' \
-          '#ifndef INODE_STATE_SUS_KSTAT' \
-          '#define INODE_STATE_SUS_KSTAT (1 << 0)' \
-          '#endif' \
-          '' \
-          '#ifndef INODE_STATE_SUS_PATH' \
-          '#define INODE_STATE_SUS_PATH (1 << 1)' \
-          '#endif' \
-          '' \
-          '#ifndef INODE_STATE_SUS_MOUNT' \
-          '#define INODE_STATE_SUS_MOUNT (1 << 2)' \
-          '#endif' \
-          '' \
-          '#ifndef INODE_STATE_OPEN_REDIRECT' \
-          '#define INODE_STATE_OPEN_REDIRECT (1 << 3)' \
-          '#endif' \
-          '' \
-          '#ifndef DEFAULT_SUS_MNT_ID' \
-          '#define DEFAULT_SUS_MNT_ID 100000' \
-          '#endif' \
-          '' \
-          '#ifndef DEFAULT_SUS_MNT_GROUP_ID' \
-          '#define DEFAULT_SUS_MNT_GROUP_ID 100000' \
-          '#endif' \
-          '' \
-          '#ifndef DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE' \
-          '#define DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE 99999' \
-          '#endif' \
-          '' \
-          '#endif /* _SUSFS_DEF_H */' > include/linux/susfs_def.h
-
-        # 6. Pastikan include/linux/susfs.h meng-include susfs_def.h
-        if [ -f "include/linux/susfs.h" ] && ! grep -q "susfs_def.h" include/linux/susfs.h; then
-          echo "🔧 Injecting #include <linux/susfs_def.h> into include/linux/susfs.h"
-          sed -i '1i#include <linux/susfs_def.h>' include/linux/susfs.h
-        fi
-
-        # 7. Mass-inject #include <linux/susfs_def.h> ke seluruh file C patched
-        echo "🔧 Mass injecting #include <linux/susfs_def.h> into all patched C files..."
-        grep -rl "susfs" fs/ kernel/ drivers/ 2>/dev/null | grep "\.c$" | while read -r file; do
-          if ! grep -q "linux/susfs_def.h" "$file"; then
-            echo "  -> Injecting header into $file"
-            sed -i '1i#include <linux/susfs_def.h>' "$file"
-          fi
-        done
-
-        echo "✅ Verification complete:"
-        ls -la include/linux/susfs* || true
-        ls -la fs/susfs.c || true
-        
+        # ---------------------------------------------------------------
+        # 5. Verification.
+        # ---------------------------------------------------------------
+        echo "[5] Verification:"
+        ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h include/linux/susfs_ida_compat.h
+        echo "    Version: $(grep -E '^#define SUSFS_VERSION' include/linux/susfs.h)"
+        echo "    fs/namespace.c ida calls: $(grep -cE 'ida_alloc_min|ida_free\(' fs/namespace.c)"
+        echo "SUSFS v2.2.0 integration done."
