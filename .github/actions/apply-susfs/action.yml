@@ -1,39 +1,50 @@
 name: "Apply SUSFS Patch & Configs"
-description: "Apply SUSFS v2.2.0 (sidex15/FlopKernel backport, base 4.14.357-openela) for camellia. Drop-in core + VFS hook patch + IDA compat shim. FTS FT8722 preserved."
+description: "Install SUSFS v2.2.0 for camellia 4.14 via pre-merged whole-file tree (3-way merged: camellia device code + FlopKernel/sidex15 v2.2.0 hooks). FTS FT8722 preserved. No fuzzy patching."
 
 runs:
   using: "composite"
   steps:
-    - name: Apply SUSFS v2.2.0
+    - name: Install SUSFS v2.2.0 (pre-merged tree)
       shell: bash
       run: |
         set -e
-        ACT_DIR="$GITHUB_WORKSPACE/patches/susfs_v220"
+        TREE="$GITHUB_WORKSPACE/patches/susfs_v220/tree"
         cd kernel-source
         echo "==============================================="
-        echo " SUSFS v2.2.0 integration (camellia 4.14.357)"
+        echo " SUSFS v2.2.0 install (camellia 4.14.357-openela)"
+        echo " Method: pre-merged whole-file overwrite (no patch/fuzz)"
         echo "==============================================="
 
+        if [ ! -d "$TREE" ]; then
+          echo "::error::merged tree not found at $TREE"
+          exit 1
+        fi
+
         # ---------------------------------------------------------------
-        # 1. Drop-in SUSFS v2.2.0 core files (NOT simonpunk 1.5.5 anymore).
-        #    Base kernel of these files = 4.14.357-openela, identical to camellia,
-        #    so they are ABI-compatible drop-ins.
+        # 1. Overwrite VFS + susfs core files with the pre-merged v2.2.0
+        #    versions. These were produced by a diff3 3-way merge:
+        #      ours=camellia base, base=FlopKernel-stripped, theirs=FlopKernel v2.2.0
+        #    so device-specific camellia code is preserved and all susfs hooks
+        #    are internally consistent at v2.2.0.
         # ---------------------------------------------------------------
-        echo "[1] Installing SUSFS v2.2.0 core files..."
-        mkdir -p include/linux
-        cp -f "$ACT_DIR/susfs.c"      fs/susfs.c
-        cp -f "$ACT_DIR/susfs.h"      include/linux/susfs.h
-        cp -f "$ACT_DIR/susfs_def.h"  include/linux/susfs_def.h
+        echo "[1] Installing merged tree files..."
+        COUNT=0
+        while IFS= read -r src; do
+          rel="${src#$TREE/}"
+          mkdir -p "$(dirname "$rel")"
+          cp -f "$src" "$rel"
+          COUNT=$((COUNT+1))
+          echo "    -> $rel"
+        done < <(find "$TREE" -type f)
+        echo "    installed $COUNT files"
         echo "    SUSFS_VERSION: $(grep -E '^#define SUSFS_VERSION' include/linux/susfs.h)"
 
         # ---------------------------------------------------------------
-        # 2. IDA compat shim: SUSFS v2.2.0 hook code uses the modern IDR API
-        #    (ida_alloc_min / ida_free) which 4.14 does NOT provide. camellia
-        #    only ships ida_get_new_above / ida_remove / ida_simple_*. Provide
-        #    static-inline shims so the new call-sites compile on 4.14.
-        #    Guarded so it is a no-op on kernels that already have the new API.
+        # 2. IDA compat shim (4.14 lacks ida_alloc_min/ida_free that the
+        #    merged fs/namespace.c SUS_MOUNT code calls). Backed by the
+        #    legacy ida_simple_* API that 4.14 ships. No-op on >=4.19.
         # ---------------------------------------------------------------
-        echo "[2] Injecting IDA compat shim for 4.14..."
+        echo "[2] Installing IDA compat shim..."
         SHIM='include/linux/susfs_ida_compat.h'
         cat > "$SHIM" <<'SHIMEOF'
         #ifndef _SUSFS_IDA_COMPAT_H
@@ -41,11 +52,6 @@ runs:
         #include <linux/version.h>
         #include <linux/idr.h>
         #include <linux/gfp.h>
-        /*
-         * 4.14 lacks ida_alloc_min()/ida_free(). Provide shims backed by the
-         * legacy ida_simple_get()/ida_simple_remove() API that 4.14 ships.
-         * Only defined when the modern API is absent (pre-4.19 behaviour).
-         */
         #if LINUX_VERSION_CODE < KERNEL_VERSION(4,19,0)
         #ifndef SUSFS_HAVE_IDA_ALLOC_MIN
         #define SUSFS_HAVE_IDA_ALLOC_MIN
@@ -57,73 +63,38 @@ runs:
         {
         	ida_simple_remove(ida, id);
         }
-        #endif /* SUSFS_HAVE_IDA_ALLOC_MIN */
-        #endif /* < 4.19 */
+        #endif
+        #endif
         #endif /* _SUSFS_IDA_COMPAT_H */
         SHIMEOF
-        # de-indent heredoc (leading 8 spaces from YAML block)
         sed -i 's/^        //' "$SHIM"
-        echo "    shim written: $SHIM"
-
-        # Make susfs.h pull the shim first (so all hook TUs see ida_alloc_min).
-        if ! grep -q "susfs_ida_compat.h" include/linux/susfs.h; then
-          sed -i '1i#include <linux/susfs_ida_compat.h>' include/linux/susfs.h
-        fi
-        # namespace.c is the VFS TU that actually calls ida_alloc_min/ida_free.
+        # ensure namespace.c + susfs.h pull the shim before using the modern API
         if ! grep -q "susfs_ida_compat.h" fs/namespace.c; then
           sed -i '1i#include <linux/susfs_ida_compat.h>' fs/namespace.c
         fi
-
-        # ---------------------------------------------------------------
-        # 3. Apply the VFS hook call-site patch (v2.0.0 base; call-sites are
-        #    stable through 2.2.0). Fuzz-tolerant. Rejects in KSU_MANUAL_HOOK
-        #    guard blocks are HARMLESS on this base (ReSukiSU uses inline hooks),
-        #    but any reject touching susfs core is surfaced and fails the build.
-        # ---------------------------------------------------------------
-        echo "[3] Applying VFS hook patch (fuzz-tolerant)..."
-        patch -p1 --fuzz=3 --no-backup-if-mismatch < "$ACT_DIR/10_vfs_hooks.patch" || true
-
-        echo "[3a] Reviewing rejects..."
-        REJECTS=$(find . -name '*.rej' 2>/dev/null || true)
-        FATAL=0
-        if [ -n "$REJECTS" ]; then
-          for r in $REJECTS; do
-            echo "    --- reject: $r ---"
-            # A reject is FATAL only if it touches a susfs_* core symbol
-            # (sus_path/kstat/mount/map/umount). Pure KSU_MANUAL_HOOK guard
-            # rejects are expected on this base and are non-fatal.
-            if grep -qE 'susfs_(add|update|mark|run|handle|get|set|alloc|spoof|is_|hide|try_umount)' "$r"; then
-              echo "    !! FATAL: reject touches susfs core in $r"
-              cat "$r"
-              FATAL=1
-            else
-              echo "    ok: harmless KSU-hook-guard reject (skipping)"
-            fi
-          done
+        if ! grep -q "susfs_ida_compat.h" include/linux/susfs.h; then
+          sed -i '1i#include <linux/susfs_ida_compat.h>' include/linux/susfs.h
         fi
-        if [ "$FATAL" = "1" ]; then
-          echo "::error::SUSFS core hunk failed to apply. Manual port needed."
-          exit 1
-        fi
-        # clean up harmless reject/orig files
-        find . -name '*.rej' -delete 2>/dev/null || true
-        find . -name '*.orig' -delete 2>/dev/null || true
 
         # ---------------------------------------------------------------
-        # 4. fs/Makefile: ensure susfs.o is built.
+        # 3. Ensure susfs.o builds.
         # ---------------------------------------------------------------
         if ! grep -q 'susfs.o' fs/Makefile; then
           echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
-          echo "[4] Added susfs.o to fs/Makefile"
+          echo "[3] Added susfs.o to fs/Makefile"
         else
-          echo "[4] susfs.o already in fs/Makefile"
+          echo "[3] susfs.o already present in fs/Makefile"
         fi
 
         # ---------------------------------------------------------------
-        # 5. Verification.
+        # 4. Sanity: no leftover conflict markers, version correct.
         # ---------------------------------------------------------------
-        echo "[5] Verification:"
+        echo "[4] Sanity checks..."
+        if grep -rnE '^(<<<<<<<|=======|>>>>>>>)' fs/ include/ kernel/ security/ 2>/dev/null | grep -v Binary | head; then
+          echo "::error::conflict markers found in merged tree"
+          exit 1
+        fi
+        echo "    no conflict markers ✓"
         ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h include/linux/susfs_ida_compat.h
         echo "    Version: $(grep -E '^#define SUSFS_VERSION' include/linux/susfs.h)"
-        echo "    fs/namespace.c ida calls: $(grep -cE 'ida_alloc_min|ida_free\(' fs/namespace.c)"
-        echo "SUSFS v2.2.0 integration done."
+        echo "SUSFS v2.2.0 install done."
