@@ -126,11 +126,14 @@ runs:
           sed -i '1i#include <linux/types.h>\n#include <linux/susfs_def.h>\n#ifndef SUSFS_MAGIC\n#define SUSFS_MAGIC 0xA5A5A5A5\n#endif' "$SUPERCALL_FILE"
         fi
 
-        # Injeksi makro & WEAK STUBS untuk semua fungsi susfs_* ke dispatch.c
+        # Injeksi makro CMD_SUSFS_* ke dispatch.c. Weak stubs DIHAPUS:
+        # dulu perlu karena susfs core absen, tapi sekarang SUSFS v2.2.0 core
+        # LENGKAP (fs/susfs.c + susfs_def.h static-inline), jadi weak stub malah
+        # bentrok ("static declaration follows non-static declaration").
         DISPATCH_FILE="drivers/kernelsu/supercall/dispatch.c"
         if [ -f "$DISPATCH_FILE" ]; then
-          echo "🔧 Injecting weak stubs for SuSFS symbols into $DISPATCH_FILE..."
-          sed -i '1i#include <linux/types.h>\n#ifndef KERNEL_SU_VERSION\n#define KERNEL_SU_VERSION 11872\n#endif\nextern bool ksu_late_loaded;\n#ifndef CMD_SUSFS_ADD_SUS_PATH\n#define CMD_SUSFS_ADD_SUS_PATH 0x55555\n#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55556\n#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x55557\n#define CMD_SUSFS_ADD_SUS_KSTAT 0x55558\n#define CMD_SUSFS_UPDATE_SUS_KSTAT 0x55559\n#define CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY 0x5555a\n#define CMD_SUSFS_SET_UNAME 0x5555b\n#define CMD_SUSFS_ENABLE_LOG 0x5555c\n#define CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG 0x5555d\n#define CMD_SUSFS_ADD_OPEN_REDIRECT 0x5555e\n#define CMD_SUSFS_ADD_SUS_MAP 0x5555f\n#define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x55560\n#define CMD_SUSFS_SHOW_ENABLED_FEATURES 0x55561\n#define CMD_SUSFS_SHOW_VARIANT 0x55562\n#define CMD_SUSFS_SHOW_VERSION 0x55563\n#endif\n\nbool __attribute__((weak)) susfs_is_current_proc_umounted(void) { return false; }\nvoid __attribute__((weak)) susfs_set_current_proc_umounted(void) {}\nvoid __attribute__((weak)) susfs_extra_works(void) {}\nint __attribute__((weak)) susfs_add_sus_path_loop(void *a) { return 0; }\nint __attribute__((weak)) susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }\nint __attribute__((weak)) susfs_enable_log(void *a) { return 0; }\nint __attribute__((weak)) susfs_add_sus_map(void *a) { return 0; }\nint __attribute__((weak)) susfs_set_avc_log_spoofing(void *a) { return 0; }\nint __attribute__((weak)) susfs_get_enabled_features(void *a) { return 0; }\nint __attribute__((weak)) susfs_show_variant(void *a) { return 0; }\nint __attribute__((weak)) susfs_show_version(void *a) { return 0; }\nvoid __attribute__((weak)) susfs_start_sdcard_monitor_fn(void) {}' "$DISPATCH_FILE"
+          echo "🔧 Injecting CMD_SUSFS macros only (no weak stubs; core provides symbols)..."
+          sed -i '1i#include <linux/types.h>\n#include <linux/susfs_def.h>\n#ifndef KERNEL_SU_VERSION\n#define KERNEL_SU_VERSION 11872\n#endif\nextern bool ksu_late_loaded;\n#ifndef CMD_SUSFS_ADD_SUS_PATH\n#define CMD_SUSFS_ADD_SUS_PATH 0x55555\n#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55556\n#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x55557\n#define CMD_SUSFS_ADD_SUS_KSTAT 0x55558\n#define CMD_SUSFS_UPDATE_SUS_KSTAT 0x55559\n#define CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY 0x5555a\n#define CMD_SUSFS_SET_UNAME 0x5555b\n#define CMD_SUSFS_ENABLE_LOG 0x5555c\n#define CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG 0x5555d\n#define CMD_SUSFS_ADD_OPEN_REDIRECT 0x5555e\n#define CMD_SUSFS_ADD_SUS_MAP 0x5555f\n#define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x55560\n#define CMD_SUSFS_SHOW_ENABLED_FEATURES 0x55561\n#define CMD_SUSFS_SHOW_VARIANT 0x55562\n#define CMD_SUSFS_SHOW_VERSION 0x55563\n#endif' "$DISPATCH_FILE"
         fi
 
         # Generasi susfs_def.h global
