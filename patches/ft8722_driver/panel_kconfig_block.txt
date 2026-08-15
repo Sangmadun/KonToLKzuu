@@ -1,0 +1,8 @@
+
+config DRM_PANEL_FT8722_TIANMA_VDO
+	tristate "FT8722 TIANMA vdo mode panel"
+	depends on OF
+	depends on DRM_MIPI_DSI
+	depends on BACKLIGHT_CLASS_DEVICE
+	help
+	  FT8722 TIANMA vdo mode FHD+ panel for camellia FT8722 units.

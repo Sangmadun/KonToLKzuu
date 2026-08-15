@@ -1,0 +1,69 @@
+name: "Inject FT8722 Touch Driver + DT + Panel"
+description: "Add full FT8722 FocalTech support to flyme kernel source: touch driver, DRM panel driver, device-tree touch node, Kconfig/Makefile wiring. flyme base has BTF (boots crDroid) but is Novatek-only; this restores FT8722 for camellia FT8722 panels."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Inject FT8722 support
+      shell: bash
+      run: |
+        set -e
+        SRC="$GITHUB_WORKSPACE/patches/ft8722_driver"
+        cd kernel-source
+        echo "=== [FT8722] full injection into flyme tree ==="
+
+        [ -d "$SRC/FT8722" ] || { echo "::error::FT8722 payload missing"; exit 1; }
+
+        # 1) touch driver dir
+        DST="drivers/input/touchscreen/mediatek/FT8722"
+        mkdir -p "$DST"
+        cp -rf "$SRC/FT8722/." "$DST/"
+        echo "[FT8722] touch driver: $(find "$DST" -type f | wc -l) files"
+
+        # 2) DRM panel driver
+        cp -f "$SRC/panel/panel-ft8722-tianma-fhdp-dsi-vdo-90hz.c" drivers/gpu/drm/panel/ && echo "[FT8722] panel driver copied"
+
+        # 3) device-tree touch node: replace with cristidclxvi superset (FocalTech reg=1 + Novatek reg=0, same &spi4)
+        DTSI="arch/arm64/boot/dts/mediatek/cust_mt6833_touch_1080x2400.dtsi"
+        if [ -f "$SRC/dt/cust_mt6833_touch_1080x2400.dtsi" ]; then
+          cp -f "$SRC/dt/cust_mt6833_touch_1080x2400.dtsi" "$DTSI"
+          echo "[FT8722] touch dtsi replaced (focaltech refs: $(grep -c focaltech "$DTSI"))"
+        fi
+
+        # 4) touchscreen Makefile wiring
+        TSMK="drivers/input/touchscreen/mediatek/Makefile"
+        if [ -f "$TSMK" ] && ! grep -q "FT8722/" "$TSMK"; then
+          echo 'obj-$(CONFIG_TOUCHSCREEN_FTS) += FT8722/' >> "$TSMK"
+          echo "[FT8722] wired $TSMK"
+        fi
+
+        # 5) touchscreen Kconfig wiring
+        TSKC="drivers/input/touchscreen/mediatek/Kconfig"
+        if [ -f "$TSKC" ] && ! grep -q "FT8722/Kconfig" "$TSKC"; then
+          if grep -qE '^endif' "$TSKC"; then
+            sed -i '0,/^endif/s|^endif|source "drivers/input/touchscreen/mediatek/FT8722/Kconfig"\nendif|' "$TSKC"
+          elif grep -qE '^endmenu' "$TSKC"; then
+            sed -i '0,/^endmenu/s|^endmenu|source "drivers/input/touchscreen/mediatek/FT8722/Kconfig"\nendmenu|' "$TSKC"
+          else
+            echo 'source "drivers/input/touchscreen/mediatek/FT8722/Kconfig"' >> "$TSKC"
+          fi
+          echo "[FT8722] sourced Kconfig in $TSKC"
+        fi
+
+        # 6) DRM panel Makefile entry
+        PMK="drivers/gpu/drm/panel/Makefile"
+        if [ -f "$PMK" ] && ! grep -q "panel-ft8722-tianma" "$PMK"; then
+          echo 'obj-$(CONFIG_DRM_PANEL_FT8722_TIANMA_VDO) += panel-ft8722-tianma-fhdp-dsi-vdo-90hz.o' >> "$PMK"
+          echo "[FT8722] wired panel Makefile"
+        fi
+
+        # 7) DRM panel Kconfig block (from payload file, avoids heredoc-in-yaml)
+        PKC="drivers/gpu/drm/panel/Kconfig"
+        if [ -f "$PKC" ] && ! grep -q "DRM_PANEL_FT8722_TIANMA_VDO" "$PKC"; then
+          cat "$SRC/panel_kconfig_block.txt" >> "$PKC"
+          echo "[FT8722] added panel Kconfig block"
+        fi
+
+        # 8) verify chip id
+        grep -rn "_FT8722" "$DST" >/dev/null && echo "[FT8722] chip id OK" || { echo "::error::FT8722 chip id missing"; exit 1; }
+        echo "[FT8722] injection done."

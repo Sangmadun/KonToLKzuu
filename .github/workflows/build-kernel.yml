@@ -152,6 +152,34 @@ jobs:
             exit 1
           fi
 
+      - name: Patch Defconfig for FT8722 (flyme/camellia manifest)
+        if: inputs.manifest_name == 'camellia'
+        run: |
+          DC="kernel-source/arch/arm64/configs/camellia_defconfig"
+          if [ -f "$DC" ]; then
+            echo "=== [FT8722] enabling FocalTech FT8722 in flyme defconfig ==="
+            # remove any stale FTS lines then add the correct ones
+            sed -i '/CONFIG_TOUCHSCREEN_FTS/d' "$DC"
+            sed -i '/CONFIG_DRM_PANEL_FT8722_TIANMA_VDO/d' "$DC"
+            {
+              echo 'CONFIG_TOUCHSCREEN_FTS=y'
+              echo 'CONFIG_TOUCHSCREEN_FTS_DIRECTORY="FT8722"'
+              echo 'CONFIG_DRM_PANEL_FT8722_TIANMA_VDO=y'
+            } >> "$DC"
+            # add ft8722 LCM to CUSTOM_KERNEL_LCM if not already present
+            if grep -q '^CONFIG_CUSTOM_KERNEL_LCM=' "$DC" && ! grep -q 'ft8722_fhdp_dsi_vdo_tianma_90hz_k19' "$DC"; then
+              sed -i 's|\(CONFIG_CUSTOM_KERNEL_LCM="[^"]*\)"|\1 ft8722_fhdp_dsi_vdo_tianma_90hz_k19"|' "$DC"
+            fi
+            echo "=== FT8722 defconfig state ==="
+            grep -nE 'TOUCHSCREEN_FTS|FT8722|CUSTOM_KERNEL_LCM' "$DC" || true
+          else
+            echo "::error::flyme defconfig $DC not found"; exit 1
+          fi
+
+      - name: Inject FT8722 Touch Driver (flyme base)
+        if: inputs.manifest_name == 'camellia'
+        uses: ./.github/actions/inject-ft8722
+
       - name: Setup KSU Fork
         uses: ./.github/actions/setup-ksu
         with:
