@@ -20,8 +20,9 @@ runs:
         cp -rf "$SRC/FT8722/." "$DST/"
         echo "[FT8722] touch driver: $(find "$DST" -type f | wc -l) files"
 
-        # 2) DRM panel driver
+        # 2) DRM panel driver + compat globals
         cp -f "$SRC/panel/panel-ft8722-tianma-fhdp-dsi-vdo-90hz.c" drivers/gpu/drm/panel/ && echo "[FT8722] panel driver copied"
+        cp -f "$SRC/panel/ft8722_panel_compat.c" drivers/gpu/drm/panel/ && echo "[FT8722] panel compat globals copied"
 
         # 3) device-tree touch node: replace with cristidclxvi superset (FocalTech reg=1 + Novatek reg=0, same &spi4)
         DTSI="arch/arm64/boot/dts/mediatek/cust_mt6833_touch_1080x2400.dtsi"
@@ -51,10 +52,11 @@ runs:
         # reuse flyme's existing TOUCHSCREEN_FTS symbol (Makefile already routes it to FT8722/).
         echo "[FT8722] Kconfig: reusing flyme's existing TOUCHSCREEN_FTS symbol (no duplicate source)"
 
-        # 6) DRM panel Makefile entry
+        # 6) DRM panel Makefile entry (+ compat globals TU, always built with the panel)
         PMK="drivers/gpu/drm/panel/Makefile"
         if [ -f "$PMK" ] && ! grep -q "panel-ft8722-tianma" "$PMK"; then
           echo 'obj-$(CONFIG_DRM_PANEL_FT8722_TIANMA_VDO) += panel-ft8722-tianma-fhdp-dsi-vdo-90hz.o' >> "$PMK"
+          echo 'obj-$(CONFIG_DRM_PANEL_FT8722_TIANMA_VDO) += ft8722_panel_compat.o' >> "$PMK"
           echo "[FT8722] wired panel Makefile"
         fi
 
