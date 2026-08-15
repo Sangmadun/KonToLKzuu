@@ -1185,81 +1185,19 @@ static int override_release(char __user *release, size_t len)
 	return ret;
 }
 
-static int override_version(struct new_utsname __user *name)
-{
-#ifdef CONFIG_F2FS_REPORT_FAKE_KERNEL_VERSION
-	int ret;
-
-	if (strcmp(current->comm, "fsck.f2fs"))
-		return 0;
-
-	ret = copy_to_user(name->release, CONFIG_F2FS_FAKE_KERNEL_RELEASE,
-			   strlen(CONFIG_F2FS_FAKE_KERNEL_RELEASE) + 1);
-	if (ret)
-		return ret;
-
-	ret = copy_to_user(name->version, CONFIG_F2FS_FAKE_KERNEL_VERSION,
-			   strlen(CONFIG_F2FS_FAKE_KERNEL_VERSION) + 1);
-
-	return ret;
-#else
-	return 0;
-#endif
-}
-
-#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
-extern void susfs_spoof_uname(struct new_utsname* tmp);
-#endif
-
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
 	struct new_utsname tmp;
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+	extern void susfs_spoof_uname(struct new_utsname* tmp);
+#endif
 
 	down_read(&uts_sem);
 	memcpy(&tmp, utsname(), sizeof(tmp));
+	up_read(&uts_sem);
 #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
 	susfs_spoof_uname(&tmp);
 #endif
-#ifndef CONFIG_FAKE_UNAME_NONE
-	if (current_uid().val == 0) {
-		int bpf_spoof = is_bpf_spoof_enabled();
-		if (bpf_spoof) {
-			bool match = false;
-			if (bpf_spoof == 1) {
-				// Partial mode: only spoof for netbpfload
-				if (!strncmp(current->comm, "netbpfload", 10))
-					match = true;
-			} else {
-				// Full mode: spoof for the expected BPF loaders
-				if (!strncmp(current->comm, "bpfloader", 9) ||
-				    !strncmp(current->comm, "netbpfload", 10) ||
-				    !strncmp(current->comm, "netd", 4) ||
-				    !strncmp(current->comm, "uprobestats", 11))
-					match = true;
-			}
-			if (match) {
-#if defined(CONFIG_FAKE_UNAME_4_19)
-				strcpy(tmp.release, "4.19.325");
-#elif defined(CONFIG_FAKE_UNAME_5_4)
-				strcpy(tmp.release, "5.4.290");
-#elif defined(CONFIG_FAKE_UNAME_5_10)
-				strcpy(tmp.release, "5.10.239");
-#elif defined(CONFIG_FAKE_UNAME_5_15)
-				strcpy(tmp.release, "5.15.200");
-#elif defined(CONFIG_FAKE_UNAME_6_1)
-				strcpy(tmp.release, "6.1.200");
-#elif defined(CONFIG_FAKE_UNAME_6_6)
-				strcpy(tmp.release, "6.6.200");
-#elif defined(CONFIG_FAKE_UNAME_6_12)
-				strcpy(tmp.release, "6.12.200");
-#endif
-				pr_info("fake uname: %s/%d release=%s\n",
-					current->comm, current->pid, tmp.release);
-			}
-		}
-	}
-#endif
-	up_read(&uts_sem);
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
 
