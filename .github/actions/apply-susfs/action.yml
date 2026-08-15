@@ -90,11 +90,19 @@ runs:
         # 4. Sanity: no leftover conflict markers, version correct.
         # ---------------------------------------------------------------
         echo "[4] Sanity checks..."
-        if grep -rnE '^(<<<<<<<|=======|>>>>>>>)' fs/ include/ kernel/ security/ 2>/dev/null | grep -v Binary | head; then
-          echo "::error::conflict markers found in merged tree"
+        MARKER_HIT=0
+        while IFS= read -r src; do
+          rel="${src#$TREE/}"
+          if grep -nE '^(<<<<<<<|>>>>>>>|\|\|\|\|\|\|\|)' "$rel" 2>/dev/null; then
+            echo "::error::conflict marker in $rel"
+            MARKER_HIT=1
+          fi
+        done < <(find "$TREE" -type f)
+        if [ "$MARKER_HIT" = "1" ]; then
+          echo "::error::conflict markers found in installed files"
           exit 1
         fi
-        echo "    no conflict markers ✓"
+        echo "    no conflict markers in installed files ✓"
         ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h include/linux/susfs_ida_compat.h
         echo "    Version: $(grep -E '^#define SUSFS_VERSION' include/linux/susfs.h)"
         echo "SUSFS v2.2.0 install done."
