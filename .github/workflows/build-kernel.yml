@@ -156,25 +156,25 @@ jobs:
         if: inputs.manifest_name == 'camellia'
         run: |
           DC="kernel-source/arch/arm64/configs/camellia_defconfig"
-          if [ -f "$DC" ]; then
-            echo "=== [FT8722] enabling FocalTech FT8722 in flyme defconfig ==="
-            # remove any stale FTS lines then add the correct ones
-            sed -i '/CONFIG_TOUCHSCREEN_FTS/d' "$DC"
-            sed -i '/CONFIG_DRM_PANEL_FT8722_TIANMA_VDO/d' "$DC"
-            {
-              echo 'CONFIG_TOUCHSCREEN_FTS=y'
-              echo 'CONFIG_TOUCHSCREEN_FTS_DIRECTORY="FT8722"'
-              echo 'CONFIG_DRM_PANEL_FT8722_TIANMA_VDO=y'
-            } >> "$DC"
-            # add ft8722 LCM to CUSTOM_KERNEL_LCM if not already present
-            if grep -q '^CONFIG_CUSTOM_KERNEL_LCM=' "$DC" && ! grep -q 'ft8722_fhdp_dsi_vdo_tianma_90hz_k19' "$DC"; then
-              sed -i 's|\(CONFIG_CUSTOM_KERNEL_LCM="[^"]*\)"|\1 ft8722_fhdp_dsi_vdo_tianma_90hz_k19"|' "$DC"
-            fi
-            echo "=== FT8722 defconfig state ==="
-            grep -nE 'TOUCHSCREEN_FTS|FT8722|CUSTOM_KERNEL_LCM' "$DC" || true
+          FULL="$GITHUB_WORKSPACE/patches/camellia_v7_full_defconfig"
+          echo "=== [defconfig] replacing minimal camellia_defconfig with FULL flyme config ==="
+          # The in-tree camellia_defconfig is a MINIMAL fragment and is missing core
+          # Android options (DEVTMPFS, SYSVIPC, TMPFS_XATTR, NF_TABLES, ...) that the
+          # real flyme build shipped. Building from it => non-booting kernel. So use
+          # the full config extracted from the known-good flyme boot image, already
+          # augmented with FT8722 + panel + KSU/SUSFS + SUS_MAP off.
+          if [ -f "$FULL" ]; then
+            cp -f "$FULL" "$DC"
+            echo "[defconfig] installed full config ($(wc -l < "$DC") lines)"
           else
-            echo "::error::flyme defconfig $DC not found"; exit 1
+            echo "::error::full defconfig payload missing at $FULL"; exit 1
           fi
+          echo "=== sanity: core Android + FT8722 present ==="
+          for c in CONFIG_DEVTMPFS CONFIG_SYSVIPC CONFIG_TMPFS_XATTR CONFIG_NF_TABLES CONFIG_TOUCHSCREEN_FTS CONFIG_DRM_PANEL_FT8722_TIANMA_VDO CONFIG_KSU CONFIG_MTK_COMBO_WIFI CONFIG_MTK_COMBO_BT; do
+            grep -qE "^$c=y" "$DC" && echo "  ok $c" || { echo "::error::$c missing in defconfig"; exit 1; }
+          done
+          grep -qE "CONFIG_TOUCHSCREEN_FTS_DIRECTORY=\"FT8722\"" "$DC" && echo "  ok FT8722 dir" || { echo "::error::FT8722 dir missing"; exit 1; }
+          grep -qE "^# CONFIG_KSU_SUSFS_SUS_MAP is not set" "$DC" && echo "  ok SUS_MAP off" || echo "  warn: SUS_MAP not explicitly off"
 
       - name: Inject FT8722 Touch Driver (flyme base)
         if: inputs.manifest_name == 'camellia'
