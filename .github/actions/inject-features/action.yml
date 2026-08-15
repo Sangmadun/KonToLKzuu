@@ -102,16 +102,16 @@ runs:
           cp -r /tmp/wireguard/src net/wireguard
 
           # Kernel 4.14 has NO include/uapi/linux/time_types.h and no __kernel_timespec
-          # in uapi headers, so wireguard's compat.h PROVIDES that struct and it MUST stay.
-          # Only comment it out when the kernel ALREADY defines it (>=4.18), to avoid
-          # a redefinition error. Detect via presence of time_types.h.
-          if [ -f "include/uapi/linux/time_types.h" ]; then
+          # in uapi headers, so wireguard's compat.h normally PROVIDES that struct.
+          # Some vendor bases backport time64/time and already define timespec, causing
+          # redefinition errors. Detect by inspecting time.h/time64.h and patch compat.h.
+          if grep -qE '(^struct timespec|#define[[:space:]]+__kernel_timespec[[:space:]]+timespec)' include/uapi/linux/time.h include/linux/time64.h 2>/dev/null; then
             if [ -f "net/wireguard/compat/compat.h" ]; then
-              echo "🔧 Kernel already has time_types.h — patching compat.h to avoid redefinition..."
+              echo "🔧 Kernel already defines timespec/__kernel_timespec — patching compat.h to avoid redefinition..."
               sed -i '/struct __kernel_timespec {/,/};/s/^/\/\//' net/wireguard/compat/compat.h
             fi
           else
-            echo "ℹ️ Kernel 4.14 (no time_types.h) — keeping compat.h __kernel_timespec intact"
+            echo "ℹ️ Kernel 4.14 (no time_types.h/time64 macro) — keeping compat.h __kernel_timespec intact"
           fi
 
           # Daftarkan Kconfig & Makefile secara bersih di net/
