@@ -47,6 +47,14 @@ GW_DIR=$(dirname "$GW_FILE")
 cd "$GW_DIR"
 chmod +x gradlew
 
+echo "🔧 Patching Kernels.kt for 4.14 non-GKI support..."
+KFILE=$(find manager-src -type f -name Kernels.kt | head -n 1)
+if [ -n "$KFILE" ] && grep -q "fun isGKI" "$KFILE"; then
+  sed -i "s/fun isGKI(): Boolean = when {/fun isGKI(): Boolean = true // PATCHED: accept all kernels for 4.14/" "$KFILE"
+  sed -i "/major > 5 -> true/,/else -> false/d" "$KFILE"
+  echo "  -> Patched: $KFILE"
+fi
+
 echo "🏗️ Starting Gradle Build for Manager APK..."
 ./gradlew assembleRelease --no-daemon
 
