@@ -31,24 +31,25 @@ runs:
         fi
 
         # 4) touchscreen Makefile wiring
+        # flyme ships its own FocalTech driver (focaltech_touch/, max FT8756, NO FT8722)
+        # gated on the SAME CONFIG_TOUCHSCREEN_FTS. Building both dirs => duplicate fts_* symbols.
+        # So DISABLE flyme's focaltech_touch line and route CONFIG_TOUCHSCREEN_FTS to FT8722 only.
         TSMK="drivers/input/touchscreen/mediatek/Makefile"
-        if [ -f "$TSMK" ] && ! grep -q "FT8722/" "$TSMK"; then
-          echo 'obj-$(CONFIG_TOUCHSCREEN_FTS) += FT8722/' >> "$TSMK"
-          echo "[FT8722] wired $TSMK"
+        if [ -f "$TSMK" ]; then
+          # comment out the old focaltech_touch obj line (avoid symbol clash)
+          sed -i 's|^\(obj-\$(CONFIG_TOUCHSCREEN_FTS)[[:space:]]*+=[[:space:]]*focaltech_touch/\)|# disabled (replaced by FT8722): \1|' "$TSMK"
+          if ! grep -q "FT8722/" "$TSMK"; then
+            echo 'obj-$(CONFIG_TOUCHSCREEN_FTS) += FT8722/' >> "$TSMK"
+          fi
+          echo "[FT8722] Makefile: focaltech_touch disabled, FT8722 routed"
+          grep -nE "CONFIG_TOUCHSCREEN_FTS|FT8722|focaltech_touch" "$TSMK" || true
         fi
 
-        # 5) touchscreen Kconfig wiring
-        TSKC="drivers/input/touchscreen/mediatek/Kconfig"
-        if [ -f "$TSKC" ] && ! grep -q "FT8722/Kconfig" "$TSKC"; then
-          if grep -qE '^endif' "$TSKC"; then
-            sed -i '0,/^endif/s|^endif|source "drivers/input/touchscreen/mediatek/FT8722/Kconfig"\nendif|' "$TSKC"
-          elif grep -qE '^endmenu' "$TSKC"; then
-            sed -i '0,/^endmenu/s|^endmenu|source "drivers/input/touchscreen/mediatek/FT8722/Kconfig"\nendmenu|' "$TSKC"
-          else
-            echo 'source "drivers/input/touchscreen/mediatek/FT8722/Kconfig"' >> "$TSKC"
-          fi
-          echo "[FT8722] sourced Kconfig in $TSKC"
-        fi
+        # 5) touchscreen Kconfig: flyme's focaltech_touch/Kconfig ALREADY defines
+        # CONFIG_TOUCHSCREEN_FTS + CONFIG_TOUCHSCREEN_FTS_DIRECTORY. Sourcing the
+        # FT8722/Kconfig too would duplicate those symbols. So DO NOT source it —
+        # reuse flyme's existing TOUCHSCREEN_FTS symbol (Makefile already routes it to FT8722/).
+        echo "[FT8722] Kconfig: reusing flyme's existing TOUCHSCREEN_FTS symbol (no duplicate source)"
 
         # 6) DRM panel Makefile entry
         PMK="drivers/gpu/drm/panel/Makefile"
