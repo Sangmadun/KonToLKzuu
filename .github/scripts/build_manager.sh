@@ -2,7 +2,21 @@
 set -e
 
 FORK="${1:-KernelSU}"
-echo "🚀 Preparing Manager build for KSU Fork: ${FORK}"
+echo "🚀 Preparing Manager for kernel engine: ${FORK}"
+
+# Camellia is Linux 4.14 non-GKI. The official current KernelSU manager
+# targets modern GKI and cannot be truthfully advertised as compatible here.
+# Use the official, signed legacy manager v0.9.5 (build 11872), whose APK
+# signature is accepted by the ReSukiSU multi-manager kernel integration.
+if [ "$FORK" = "ReSuKISU" ] || [ "$FORK" = "ReSukiSU" ]; then
+  OFFICIAL_URL="https://github.com/tiann/KernelSU/releases/download/v0.9.5/KernelSU_v0.9.5_11872-release.apk"
+  mkdir -p "$GITHUB_WORKSPACE/output_apk"
+  curl -fL --retry 3 "$OFFICIAL_URL" -o "$GITHUB_WORKSPACE/output_apk/KernelSU-Official-v0.9.5-11872-arm64.apk"
+  test -s "$GITHUB_WORKSPACE/output_apk/KernelSU-Official-v0.9.5-11872-arm64.apk"
+  sha256sum "$GITHUB_WORKSPACE/output_apk/KernelSU-Official-v0.9.5-11872-arm64.apk" | tee "$GITHUB_WORKSPACE/output_apk/KernelSU-Official-v0.9.5-11872-arm64.apk.sha256"
+  echo "✅ Official signed legacy manager downloaded; no re-signing performed."
+  exit 0
+fi
 
 # Mapping repo URL berdasarkan KSU Fork
 case "$FORK" in
