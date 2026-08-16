@@ -29,6 +29,35 @@ set_config "CONFIG_KSU" "y" "$DEFCONFIG_FILE"
 set_config "CONFIG_DEBUG_INFO" "y" "$DEFCONFIG_FILE"
 set_config "CONFIG_DEBUG_INFO_BTF" "y" "$DEFCONFIG_FILE"
 
+# This vendor 4.14 tree contains the BTF implementation and Kconfig, but its
+# older link-vmlinux.sh defines gen_btf() without ever invoking it. Add the
+# missing upstream-style generation/link step before KALLSYMS. Without this,
+# CONFIG_DEBUG_INFO_BTF=y is misleading and vmlinux has no .BTF section.
+python3 - <<'PY'
+from pathlib import Path
+p = Path("kernel-source/scripts/link-vmlinux.sh")
+s = p.read_text()
+marker = 'if [ -n "${CONFIG_KALLSYMS}" ]; then\n'
+block = '''btf_vmlinux_bin_o=""
+if [ -n "${CONFIG_DEBUG_INFO_BTF}" ]; then
+	btf_vmlinux_bin_o=.btf.vmlinux.bin.o
+	vmlinux_link .tmp_vmlinux_btf
+	gen_btf .tmp_vmlinux_btf "${btf_vmlinux_bin_o}"
+	rm -f .tmp_vmlinux_btf
+fi
+
+'''
+if block not in s:
+    if marker not in s:
+        raise SystemExit("KALLSYMS insertion marker missing in link-vmlinux.sh")
+    s = s.replace(marker, block + marker, 1)
+p.write_text(s)
+PY
+
+grep -q 'btf_vmlinux_bin_o=.btf.vmlinux.bin.o' kernel-source/scripts/link-vmlinux.sh || {
+  echo '::error::BTF link step was not installed'; exit 1;
+}
+
 # Prepare Toolchain & Ccache
 rm -f "$GITHUB_WORKSPACE/toolchain/clang/bin/ld"
 export PATH="$GITHUB_WORKSPACE/toolchain/clang/bin:$GITHUB_WORKSPACE/toolchain/gcc64/bin:$GITHUB_WORKSPACE/toolchain/gcc32/bin:$PATH"
