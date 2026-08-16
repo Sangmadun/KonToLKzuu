@@ -41,13 +41,13 @@ from pathlib import Path
 lds = Path("arch/arm64/kernel/vmlinux.lds.S")
 ls = lds.read_text()
 lds_marker = "\tNOTES\n"
-lds_block = '''\tNOTES
+lds_block = '''	NOTES
 
-\t.BTF : ALIGN(4) {
-\t\t__start_BTF = .;
-\t\tKEEP(*(.BTF))
-\t\t__stop_BTF = .;
-\t}
+	.BTF ALIGN(4) : {
+		__start_BTF = .;
+		KEEP(*(.BTF))
+		__stop_BTF = .;
+	}
 '''
 if "__start_BTF" not in ls:
     if lds_marker not in ls:
