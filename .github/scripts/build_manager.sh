@@ -47,13 +47,39 @@ GW_DIR=$(dirname "$GW_FILE")
 cd "$GW_DIR"
 chmod +x gradlew
 
-echo "🔧 Patching Kernels.kt for 4.14 non-GKI support..."
-KFILE=$(find manager-src -type f -name Kernels.kt | head -n 1)
-if [ -n "$KFILE" ] && grep -q "fun isGKI" "$KFILE"; then
-  sed -i "s/fun isGKI(): Boolean = when {/fun isGKI(): Boolean = true // PATCHED: accept all kernels for 4.14/" "$KFILE"
-  sed -i "/major > 5 -> true/,/else -> false/d" "$KFILE"
-  echo "  -> Patched: $KFILE"
+# ReSukiSU latest explicitly supports manually integrated non-GKI kernels.
+# The old script tried to patch `manager-src/...` after cd-ing into that
+# directory, so the patch silently missed the file and the APK kept the
+# GKI-only UI gate. Patch using an absolute path and verify the result.
+echo "🔧 Enabling ReSukiSU non-GKI UI path for Linux 4.14..."
+KFILE="$GITHUB_WORKSPACE/$GW_DIR/app/src/main/java/com/resukisu/resukisu/Kernels.kt"
+if [ ! -f "$KFILE" ]; then
+  KFILE=$(find "$GITHUB_WORKSPACE/manager-src" -type f -name Kernels.kt | head -n 1)
 fi
+if [ -z "$KFILE" ] || [ ! -f "$KFILE" ]; then
+  echo "❌ Kernels.kt not found; refusing to ship an unverified manager"
+  exit 1
+fi
+python3 - "$KFILE" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+old = '''    fun isGKI(): Boolean = when {
+        major > 5 -> true
+        major == 5 && patchLevel >= 10 -> true
+        else -> false
+    }'''
+new = '''    // Camellia is Linux 4.14 non-GKI. ReSukiSU's built-in/manual
+    // integration path supports it; do not classify it as unsupported in UI.
+    fun isGKI(): Boolean = true'''
+if old in s:
+    s = s.replace(old, new, 1)
+elif 'fun isGKI(): Boolean = true' not in s:
+    raise SystemExit('unexpected Kernels.kt layout; no patch applied')
+p.write_text(s)
+PY
+ grep -A4 -B2 'fun isGKI' "$KFILE"
 
 echo "🏗️ Starting Gradle Build for Manager APK..."
 ./gradlew assembleRelease --no-daemon
