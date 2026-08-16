@@ -4,20 +4,20 @@ set -e
 FORK="${1:-KernelSU}"
 echo "🚀 Preparing Manager for kernel engine: ${FORK}"
 
-# For ReSukiSU, use the exact official APK supplied for this build target.
-# It is copied byte-for-byte: no UI patch and no re-signing.
+# Preserve the exact official APK as a reference artifact, then build a
+# separate compatibility manager for non-GKI Camellia. The official UI has a
+# hard GKI gate and exits on Linux 4.14; it must not be mislabeled as working.
 if [ "$FORK" = "ReSuKISU" ] || [ "$FORK" = "ReSukiSU" ]; then
   OFFICIAL_URL="https://github.com/Sangmadun/KonToLKzuu/releases/download/v20260816-0314/ReSuKISU_v4.1.0_35002-arm64-v8a-release.apk"
   EXPECTED_SHA256="5f13a758ecac5eb7c9275967e1f2041974d3473e1e97ea2250aad4a45d40385d"
-  OUT="$GITHUB_WORKSPACE/output_apk/ReSukiSU_v4.1.0_35002-arm64-v8a-release.apk"
+  OUT="$GITHUB_WORKSPACE/output_apk/ReSuKISU_v4.1.0_35002-arm64-v8a-official.apk"
   mkdir -p "$GITHUB_WORKSPACE/output_apk"
   curl -fL --retry 3 "$OFFICIAL_URL" -o "$OUT"
   test -s "$OUT"
   ACTUAL_SHA256="$(sha256sum "$OUT" | awk '{print $1}')"
   [ "$ACTUAL_SHA256" = "$EXPECTED_SHA256" ] || { echo "❌ APK checksum mismatch"; exit 1; }
   printf '%s  %s\n' "$ACTUAL_SHA256" "$(basename "$OUT")" > "$OUT.sha256"
-  echo "✅ Exact supplied ReSukiSU official APK verified; no patch/signing performed."
-  exit 0
+  echo "✅ Exact supplied ReSukiSU official APK preserved as reference artifact."
 fi
 
 # Mapping repo URL berdasarkan KSU Fork
@@ -128,7 +128,7 @@ keytool -genkeypair -v -keystore release.keystore -alias releasekey -keyalg RSA 
 APKSIGNER=$(find $ANDROID_HOME/build-tools/ -name "apksigner" 2>/dev/null | sort -V | tail -n 1)
 
 mkdir -p "$GITHUB_WORKSPACE/output_apk"
-FINAL_APK_PATH="$GITHUB_WORKSPACE/output_apk/${FORK}_Manager_arm64-signed.apk"
+FINAL_APK_PATH="$GITHUB_WORKSPACE/output_apk/${FORK}_Manager_4.14-compat-arm64-signed.apk"
 
 if [ -n "$APKSIGNER" ] && [ -x "$APKSIGNER" ]; then
   echo "⚙️ Signing using apksigner ($APKSIGNER)..."
