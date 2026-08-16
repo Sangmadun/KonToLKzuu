@@ -92,11 +92,21 @@ runs:
         } # end attributes
 
         # boot shell variables
-        # Camellia uses a non-A/B boot partition exposed as /dev/block/by-name/boot.
-        # Do not rely on AnyKernel's generic auto probe: some TWRP/OrangeFox
-        # builds omit the aliases used by the probe and abort before split_boot.
+        # Camellia uses a non-A/B boot partition. Resolve the real block path
+        # before AnyKernel setup: some TWRP/OrangeFox builds omit aliases used
+        # by the generic probe and abort before split_boot.
         block=boot;
         is_slot_device=0;
+        for _p in \
+          /dev/block/by-name/boot \
+          /dev/block/bootdevice/by-name/boot \
+          /dev/block/platform/*/by-name/boot \
+          /dev/block/platform/*/*/by-name/boot; do
+          if [ -e "$_p" ]; then
+            block="$_p";
+            break;
+          fi;
+        done;
         ramdisk_compression=auto;
         patch_vbmeta_flag=auto;
 
