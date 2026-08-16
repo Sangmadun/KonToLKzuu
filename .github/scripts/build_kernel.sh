@@ -35,6 +35,25 @@ set_config "CONFIG_DEBUG_INFO_BTF" "y" "$DEFCONFIG_FILE"
 # CONFIG_DEBUG_INFO_BTF=y is misleading and vmlinux has no .BTF section.
 python3 - <<'PY'
 from pathlib import Path
+# The vendor arm64 linker script has no BTF output section. The generated
+# .btf.vmlinux.bin.o cannot be retained by the final link without explicit
+# bounds symbols, so install the minimal read-only section before INIT data.
+lds = Path("arch/arm64/kernel/vmlinux.lds.S")
+ls = lds.read_text()
+lds_marker = "\tNOTES\n"
+lds_block = '''\tNOTES
+
+\t.BTF : ALIGN(4) {
+\t\t__start_BTF = .;
+\t\tKEEP(*(.BTF))
+\t\t__stop_BTF = .;
+\t}
+'''
+if "__start_BTF" not in ls:
+    if lds_marker not in ls:
+        raise SystemExit("arm64 linker NOTES marker missing")
+    lds.write_text(ls.replace(lds_marker, lds_block, 1))
+
 p = Path("scripts/link-vmlinux.sh")
 s = p.read_text()
 marker = 'if [ -n "${CONFIG_KALLSYMS}" ]; then\n'
