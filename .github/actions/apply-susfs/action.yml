@@ -113,6 +113,14 @@ runs:
         grep -n 'ksu_handle_setresuid' kernel/sys.c
 
         # ---------------------------------------------------------------
+        # 3c. ReSukiSU exec hook for this kernel's 4.14 exec.c layout.
+        #     Keep the upstream validator enabled; add the real hook instead
+        #     of bypassing the check or fabricating the symbol.
+        # ---------------------------------------------------------------
+        echo "[3c] Integrating ReSukiSU execve hook..."
+        python3 "$GITHUB_WORKSPACE/.github/scripts/ensure_resukisu_exec_hook.py"
+
+        # ---------------------------------------------------------------
         # 4. Sanity: no leftover conflict markers, version correct.
         # ---------------------------------------------------------------
         echo "[4] Sanity checks..."
