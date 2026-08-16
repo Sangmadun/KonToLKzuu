@@ -4,17 +4,19 @@ set -e
 FORK="${1:-KernelSU}"
 echo "🚀 Preparing Manager for kernel engine: ${FORK}"
 
-# Camellia is Linux 4.14 non-GKI. The official current KernelSU manager
-# targets modern GKI and cannot be truthfully advertised as compatible here.
-# Use the official, signed legacy manager v0.9.5 (build 11872), whose APK
-# signature is accepted by the ReSukiSU multi-manager kernel integration.
+# For ReSukiSU, use the exact official APK supplied for this build target.
+# It is copied byte-for-byte: no UI patch and no re-signing.
 if [ "$FORK" = "ReSuKISU" ] || [ "$FORK" = "ReSukiSU" ]; then
-  OFFICIAL_URL="https://github.com/tiann/KernelSU/releases/download/v0.9.5/KernelSU_v0.9.5_11872-release.apk"
+  OFFICIAL_URL="https://github.com/Sangmadun/KonToLKzuu/releases/download/v20260816-0314/ReSuKISU_v4.1.0_35002-arm64-v8a-release.apk"
+  EXPECTED_SHA256="5f13a758ecac5eb7c9275967e1f2041974d3473e1e97ea2250aad4a45d40385d"
+  OUT="$GITHUB_WORKSPACE/output_apk/ReSukiSU_v4.1.0_35002-arm64-v8a-release.apk"
   mkdir -p "$GITHUB_WORKSPACE/output_apk"
-  curl -fL --retry 3 "$OFFICIAL_URL" -o "$GITHUB_WORKSPACE/output_apk/KernelSU-Official-v0.9.5-11872-arm64.apk"
-  test -s "$GITHUB_WORKSPACE/output_apk/KernelSU-Official-v0.9.5-11872-arm64.apk"
-  sha256sum "$GITHUB_WORKSPACE/output_apk/KernelSU-Official-v0.9.5-11872-arm64.apk" | tee "$GITHUB_WORKSPACE/output_apk/KernelSU-Official-v0.9.5-11872-arm64.apk.sha256"
-  echo "✅ Official signed legacy manager downloaded; no re-signing performed."
+  curl -fL --retry 3 "$OFFICIAL_URL" -o "$OUT"
+  test -s "$OUT"
+  ACTUAL_SHA256="$(sha256sum "$OUT" | awk '{print $1}')"
+  [ "$ACTUAL_SHA256" = "$EXPECTED_SHA256" ] || { echo "❌ APK checksum mismatch"; exit 1; }
+  printf '%s  %s\n' "$ACTUAL_SHA256" "$(basename "$OUT")" > "$OUT.sha256"
+  echo "✅ Exact supplied ReSukiSU official APK verified; no patch/signing performed."
   exit 0
 fi
 
