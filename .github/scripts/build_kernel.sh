@@ -54,7 +54,7 @@ if block not in s:
 p.write_text(s)
 PY
 
-grep -q 'btf_vmlinux_bin_o=.btf.vmlinux.bin.o' kernel-source/scripts/link-vmlinux.sh || {
+grep -q 'btf_vmlinux_bin_o=.btf.vmlinux.bin.o' scripts/link-vmlinux.sh || {
   echo '::error::BTF link step was not installed'; exit 1;
 }
 
