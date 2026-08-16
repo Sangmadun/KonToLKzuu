@@ -215,6 +215,26 @@ jobs:
       - name: Build Kernel Image
         run: bash .github/scripts/build_kernel.sh "${{ env.KERNEL_DEFCONFIG }}" "${{ env.ARCH }}"
 
+      - name: Verify ReSukiSU/SUSFS kernel contract
+        if: inputs.manifest_name == 'camellia'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$GITHUB_WORKSPACE/kernel-source"
+          DC="$SRC/out/.config"
+          IMG="$SRC/out/arch/arm64/boot/Image.gz-dtb"
+          [ -f "$DC" ] || { echo "::error::final .config missing"; exit 1; }
+          [ -f "$IMG" ] || { echo "::error::Image.gz-dtb missing"; exit 1; }
+          for c in CONFIG_KSU CONFIG_KSU_MULTI_MANAGER_SUPPORT CONFIG_KSU_SUSFS CONFIG_TOUCHSCREEN_FTS; do
+            grep -qE "^${c}=y$" "$DC" || { echo "::error::$c is not enabled in final .config"; exit 1; }
+          done
+          grep -qE '^CONFIG_TOUCHSCREEN_FTS_DIRECTORY="FT8722"$' "$DC" || { echo "::error::FT8722 directory missing"; exit 1; }
+          grep -qE '^CONFIG_KSU_SUSFS_SUS_MAP=n$|^# CONFIG_KSU_SUSFS_SUS_MAP is not set$' "$DC" || { echo "::error::unexpected SUS_MAP state"; exit 1; }
+          grep -q 'SUSFS_VERSION.*2\.2\.0' "$SRC/include/linux/susfs.h" || { echo "::error::SUSFS 2.2.0 header not found"; exit 1; }
+          grep -q 'EXPECTED_HASH_RESUKISU' "$SRC/drivers/kernelsu/manager_sign.h" || { echo "::error::ReSukiSU signature table missing"; exit 1; }
+          echo "✅ final kernel config: KSU + multi-manager + SUSFS 2.2.0 + FT8722"
+          echo "✅ ReSukiSU signature table present"
+
       - name: Package AnyKernel3 & Generate SHA256
         uses: ./.github/actions/package-anykernel
         with:
