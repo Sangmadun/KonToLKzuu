@@ -239,6 +239,7 @@ jobs:
           grep -q '^CONFIG_TOUCHSCREEN_FTS_DIRECTORY="FT8722"$' "$CFG"
           grep -q '^# CONFIG_KSU_TRACEPOINT_HOOK is not set$' "$CFG"
           grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$CFG"
+          grep -q '^# CONFIG_KPROBES is not set$' "$CFG"
           grep -q '^# CONFIG_KSU_SUSFS_SUS_MAP is not set$' "$CFG"
           test -n "${KSU_UPSTREAM_COMMIT:-}"
           test -s "$BOOT/Image"

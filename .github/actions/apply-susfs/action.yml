@@ -120,6 +120,12 @@ runs:
         echo "[3c] Integrating ReSukiSU execve hook..."
         python3 "$GITHUB_WORKSPACE/.github/scripts/ensure_resukisu_exec_hook.py"
 
+        # ReSukiSU's validator requires every manual-hook call site on 4.14.
+        # Apply and verify the exact 4.14-compatible hooks; never weaken the
+        # validator or merely add symbol strings.
+        echo "[3d] Integrating remaining ReSukiSU manual hooks..."
+        python3 "$GITHUB_WORKSPACE/.github/scripts/ensure_resukisu_manual_hooks.py"
+
         # ---------------------------------------------------------------
         # 4. Sanity: no leftover conflict markers, version correct.
         # ---------------------------------------------------------------

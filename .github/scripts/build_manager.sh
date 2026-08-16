@@ -2,7 +2,26 @@
 set -euo pipefail
 
 FORK="${1:-KernelSU}"
-echo "Preparing Manager build for KSU fork: ${FORK}"
+echo "Preparing Manager for KSU fork: ${FORK}"
+
+# ReSuKiSU Manager is supplied/pinned by the operator. Preserve the APK
+# byte-for-byte: no source rebuild, UI patch, re-signing, or substitution.
+if [ "$FORK" = "ReSuKISU" ] || [ "$FORK" = "ReSukiSU" ]; then
+  OFFICIAL_URL="https://github.com/Sangmadun/KonToLKzuu/releases/download/v20260816-1327/ReSukiSU_v4.1.0_35002-arm64-v8a-release.apk"
+  EXPECTED_SHA256="5f13a758ecac5eb7c9275967e1f2041974d3473e1e97ea2250aad4a45d40385d"
+  OUT="$GITHUB_WORKSPACE/output_apk/ReSukiSU_v4.1.0_35002-arm64-v8a-release.apk"
+  mkdir -p "$GITHUB_WORKSPACE/output_apk"
+  curl -fL --retry 3 "$OFFICIAL_URL" -o "$OUT"
+  test -s "$OUT"
+  ACTUAL_SHA256="$(sha256sum "$OUT" | awk '{print $1}')"
+  [ "$ACTUAL_SHA256" = "$EXPECTED_SHA256" ] || { echo "::error::ReSukiSU APK checksum mismatch"; exit 1; }
+  unzip -t "$OUT" >/dev/null
+  unzip -Z1 "$OUT" | grep -q '^lib/arm64-v8a/libkernelsu.so$' || { echo "::error::APK is not arm64-v8a"; exit 1; }
+  printf '%s  %s\n' "$ACTUAL_SHA256" "$(basename "$OUT")" > "$OUT.sha256"
+  printf '%s\n' "$OFFICIAL_URL" > "$GITHUB_WORKSPACE/output_apk/manager_source_url.txt"
+  echo "Exact operator-supplied ReSukiSU APK verified; no patch/signing performed."
+  exit 0
+fi
 
 case "$FORK" in
   "xxKSU"|"KSU-Next")
