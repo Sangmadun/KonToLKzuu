@@ -217,6 +217,38 @@ jobs:
       - name: Build Kernel Image
         run: bash .github/scripts/build_kernel.sh "${{ env.KERNEL_DEFCONFIG }}" "${{ env.ARCH }}"
 
+      - name: Verify Built Kernel Configuration and Identity
+        run: |
+          set -euo pipefail
+          CFG="kernel-source/out/.config"
+          BOOT="kernel-source/out/arch/arm64/boot"
+          test -s "$CFG"
+          for c in \
+            CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_DEBUG_INFO CONFIG_DEBUG_INFO_BTF \
+            CONFIG_TOUCHSCREEN_FTS CONFIG_DRM_PANEL_FT8722_TIANMA_VDO \
+            CONFIG_DEVTMPFS CONFIG_SYSVIPC CONFIG_POSIX_MQUEUE CONFIG_IPC_NS \
+            CONFIG_TMPFS_XATTR CONFIG_NF_TABLES CONFIG_BT CONFIG_BT_RFCOMM \
+            CONFIG_BT_BNEP CONFIG_BT_HIDP CONFIG_CFG80211 CONFIG_MTK_COMBO \
+            CONFIG_MTK_COMBO_CHIP_CONSYS_6833 CONFIG_MTK_COMBO_WIFI \
+            CONFIG_MTK_COMBO_BT CONFIG_MTK_BTIF CONFIG_SND_SOC_MTK_BTCVSD; do
+            grep -q "^${c}=y$" "$CFG" || { echo "::error::$c is not built-in"; exit 1; }
+          done
+          grep -q '^CONFIG_TOUCHSCREEN_FTS_DIRECTORY="FT8722"$' "$CFG"
+          grep -q '^# CONFIG_KSU_TRACEPOINT_HOOK is not set$' "$CFG"
+          grep -q '^# CONFIG_KSU_MANUAL_HOOK is not set$' "$CFG"
+          grep -q '^# CONFIG_KSU_SUSFS_SUS_MAP is not set$' "$CFG"
+          test -n "${KSU_UPSTREAM_COMMIT:-}"
+          test -s "$BOOT/Image"
+          grep -aFq 'ReSukiSU' "$BOOT/Image"
+          grep -aFq 'susfs is initialized! version: v2.2.0' "$BOOT/Image"
+          grep -aFq 'focaltech,fts' "$BOOT/Image"
+          test -s "kernel-source/out/vmlinux"
+          command -v readelf >/dev/null
+          readelf -S "kernel-source/out/vmlinux" | grep -q '[.]BTF'
+          cp "$CFG" full.config
+          printf '%s\n' "$KSU_UPSTREAM_COMMIT" > ksu_upstream_commit.txt
+          sha256sum "$BOOT/Image" > Image.sha256
+
       - name: Package AnyKernel3 & Generate SHA256
         uses: ./.github/actions/package-anykernel
         with:
@@ -239,9 +271,12 @@ jobs:
           path: |
            *.zip
            *.sha256
+           full.config
+           ksu_upstream_commit.txt
            changelog.txt
            commit_link.txt
           if-no-files-found: error
+          retention-days: 7
 
       - name: Send Telegram Failure Notification & Cancel Jobs
         if: failure()
@@ -312,6 +347,35 @@ jobs:
         with:
           path: release_assets
           merge-multiple: true
+
+      - name: Verify Release Assets Before Publishing
+        run: |
+          set -euo pipefail
+          mapfile -t ZIPS < <(find release_assets -type f -name '*.zip' | sort)
+          [ "${#ZIPS[@]}" -eq 1 ] || { echo "::error::expected exactly one kernel ZIP"; exit 1; }
+          ZIP="${ZIPS[0]}"
+          SUM="${ZIP}.sha256"
+          test -s "$SUM"
+          (cd "$(dirname "$ZIP")" && sha256sum -c "$(basename "$SUM")")
+          unzip -t "$ZIP"
+          mapfile -t PAYLOADS < <(unzip -Z1 "$ZIP" | grep -E '(^|/)(Image|Image.gz|Image.gz-dtb)$')
+          [ "${#PAYLOADS[@]}" -eq 1 ] || { echo "::error::expected exactly one kernel payload"; exit 1; }
+          test -s release_assets/full.config
+          test -s release_assets/ksu_upstream_commit.txt
+          unzip -p "$ZIP" anykernel.sh | grep -q 'device.name1=camellia'
+          unzip -p "$ZIP" anykernel.sh | grep -q 'kernel.string=Lotus Kernel for Xiaomi Camellia'
+          TMP=$(mktemp -d)
+          unzip -p "$ZIP" "${PAYLOADS[0]}" > "$TMP/payload"
+          gzip -t "$TMP/payload"
+          gzip -dc "$TMP/payload" > "$TMP/Image"
+          grep -aFq 'ReSukiSU' "$TMP/Image"
+          grep -aFq 'susfs is initialized! version: v2.2.0' "$TMP/Image"
+          grep -aFq 'focaltech,fts' "$TMP/Image"
+          grep -aFq 'btf' "$TMP/Image"
+          sha256sum "$TMP/payload" > release_assets/payload.sha256
+          sha256sum "$TMP/Image" > release_assets/Image.uncompressed.sha256
+          printf '%s\n' "${PAYLOADS[0]}" > release_assets/payload_identity.txt
+          rm -rf "$TMP"
 
       - name: Prepare Apk Metadata & Cleanup
         run: |

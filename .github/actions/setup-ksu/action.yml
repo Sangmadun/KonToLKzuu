@@ -48,6 +48,21 @@ runs:
           git clone --depth=1 "$REPO" KernelSU_temp
         fi
 
+        KSU_COMMIT=$(git -C KernelSU_temp rev-parse HEAD)
+        echo "KSU_UPSTREAM_COMMIT=$KSU_COMMIT" >> "$GITHUB_ENV"
+        echo "📌 Upstream KSU commit: $KSU_COMMIT"
+
+        if [ "$FORK" = "ReSuKISU" ] || [ "$FORK" = "ReSukiSU" ]; then
+          echo "🔧 Integrating current ReSukiSU using its upstream setup.sh..."
+          mv KernelSU_temp KernelSU
+          sh KernelSU/kernel/setup.sh "$KSU_COMMIT"
+          test -L drivers/kernelsu || { echo "❌ upstream setup did not create drivers/kernelsu"; exit 1; }
+          test -f drivers/kernelsu/Kbuild || { echo "❌ ReSukiSU Kbuild missing"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' drivers/kernelsu/Kbuild || { echo "❌ current ReSukiSU SUSFS integration missing"; exit 1; }
+          echo "✅ ReSukiSU upstream integration preserved (no source rewriting)."
+          exit 0
+        fi
+
         mkdir -p drivers/kernelsu
 
         if [ -d "KernelSU_temp/kernel" ]; then
