@@ -29,31 +29,11 @@ set_config "CONFIG_KSU" "y" "$DEFCONFIG_FILE"
 set_config "CONFIG_DEBUG_INFO" "y" "$DEFCONFIG_FILE"
 set_config "CONFIG_DEBUG_INFO_BTF" "y" "$DEFCONFIG_FILE"
 
-# This vendor 4.14 tree contains the BTF implementation and Kconfig, but its
-# older link-vmlinux.sh defines gen_btf() without ever invoking it. Add the
-# missing upstream-style generation/link step before KALLSYMS. Without this,
-# CONFIG_DEBUG_INFO_BTF=y is misleading and vmlinux has no .BTF section.
+# This vendor 4.14 tree contains the BTF implementation and its upstream BTF()
+# linker macro. Only invoke generation here; do not inject a literal .BTF
+# section because RO_DATA expands the existing BTF macro.
 python3 - <<'PY'
 from pathlib import Path
-# The vendor arm64 linker script has no BTF output section. The generated
-# .btf.vmlinux.bin.o cannot be retained by the final link without explicit
-# bounds symbols, so install the minimal read-only section before INIT data.
-lds = Path("arch/arm64/kernel/vmlinux.lds.S")
-ls = lds.read_text()
-# Keep the section outside the multi-line NOTES/RO_DATA macro expansion.
-lds_block = '''	.BTF ALIGN(4) : {
-		__start_BTF = .;
-		KEEP(*(.BTF))
-		__stop_BTF = .;
-	}
-
-'''
-if "__start_BTF" not in ls:
-    lds_marker = "	__init_begin = .;\n"
-    if lds_marker not in ls:
-        raise SystemExit("arm64 linker init marker missing")
-    lds.write_text(ls.replace(lds_marker, lds_block + lds_marker, 1))
-
 p = Path("scripts/link-vmlinux.sh")
 s = p.read_text()
 marker = 'if [ -n "${CONFIG_KALLSYMS}" ]; then\n'
