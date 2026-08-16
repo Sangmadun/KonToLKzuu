@@ -29,11 +29,28 @@ set_config "CONFIG_KSU" "y" "$DEFCONFIG_FILE"
 set_config "CONFIG_DEBUG_INFO" "y" "$DEFCONFIG_FILE"
 set_config "CONFIG_DEBUG_INFO_BTF" "y" "$DEFCONFIG_FILE"
 
-# This vendor 4.14 tree contains the BTF implementation and its upstream BTF()
-# linker macro. Only invoke generation here; do not inject a literal .BTF
-# section because RO_DATA expands the existing BTF macro.
+# This vendor 4.14 tree contains the BTF implementation and its BTF() linker
+# macro, but the macro lacks KEEP(). With --gc-sections, the generated BTF
+# input is discarded from final vmlinux. Retain it in the vendor macro.
 python3 - <<'PY'
 from pathlib import Path
+
+lds_h = Path("include/asm-generic/vmlinux.lds.h")
+text = lds_h.read_text()
+lines = text.splitlines(True)
+changed = False
+for i, line in enumerate(lines):
+    if line.lstrip().startswith("*(.BTF)") and line.rstrip().endswith("\\"):
+        indent = line[:len(line) - len(line.lstrip())]
+        suffix = line[line.index(")") + 1:]
+        lines[i] = indent + "KEEP(*(.BTF))" + suffix
+        changed = True
+        break
+if not changed:
+    if "KEEP(*(.BTF))" not in text:
+        raise SystemExit("BTF linker input line missing")
+lds_h.write_text("".join(lines))
+
 p = Path("scripts/link-vmlinux.sh")
 s = p.read_text()
 marker = 'if [ -n "${CONFIG_KALLSYMS}" ]; then\n'
