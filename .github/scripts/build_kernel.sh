@@ -40,19 +40,19 @@ from pathlib import Path
 # bounds symbols, so install the minimal read-only section before INIT data.
 lds = Path("arch/arm64/kernel/vmlinux.lds.S")
 ls = lds.read_text()
-lds_marker = "\tNOTES\n"
-lds_block = '''	NOTES
-
-	.BTF ALIGN(4) : {
+# Keep the section outside the multi-line NOTES/RO_DATA macro expansion.
+lds_block = '''	.BTF ALIGN(4) : {
 		__start_BTF = .;
 		KEEP(*(.BTF))
 		__stop_BTF = .;
 	}
+
 '''
 if "__start_BTF" not in ls:
+    lds_marker = "	__init_begin = .;\n"
     if lds_marker not in ls:
-        raise SystemExit("arm64 linker NOTES marker missing")
-    lds.write_text(ls.replace(lds_marker, lds_block, 1))
+        raise SystemExit("arm64 linker init marker missing")
+    lds.write_text(ls.replace(lds_marker, lds_block + lds_marker, 1))
 
 p = Path("scripts/link-vmlinux.sh")
 s = p.read_text()
