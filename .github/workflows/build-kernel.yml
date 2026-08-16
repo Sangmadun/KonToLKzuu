@@ -58,7 +58,12 @@ jobs:
 # JOB 1: BUILD & COMPILING KERNEL
 # =========================================================================
   build-kernel:
-    if: inputs.build_target == 'both' || inputs.build_target == 'kernel_only'
+    needs: build-manager
+    if: |
+      always() && !cancelled() && (
+        inputs.build_target == 'kernel_only' ||
+        (inputs.build_target == 'both' && needs.build-manager.result == 'success')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -67,6 +72,13 @@ jobs:
       KERNEL_DEFCONFIG: ${{ inputs.manifest_name == 'cristidclxvi' && 'camellian_id_defconfig' || 'camellia_defconfig' }}
 
     steps:
+      - name: Download Manager Compatibility APK for Kernel Signature Pairing
+        if: inputs.build_target == 'both'
+        uses: actions/download-artifact@v4
+        with:
+          name: manager-apk-artifact
+          path: output_apk
+
       - name: Maximize Build Space
         uses: easimon/maximize-build-space@master
         with:
@@ -281,9 +293,8 @@ jobs:
   # =========================================================================
   
   build-manager:
-    needs: build-kernel
     if: |
-      always() && !cancelled() && (
+      !cancelled() && (
         inputs.build_target == 'both' || inputs.build_target == 'manager_only'
       )
     runs-on: ubuntu-latest

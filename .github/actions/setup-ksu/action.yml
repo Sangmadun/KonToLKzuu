@@ -61,6 +61,29 @@ runs:
           exit 1
         fi
 
+        # Pair the kernel with the CI-signed non-GKI compatibility Manager.
+        # ReSukiSU checks the APK certificate in-kernel; UI-only patching is
+        # insufficient when the certificate is absent from manager_sign.h.
+        COMPAT_APK="$GITHUB_WORKSPACE/output_apk/ReSuKISU_Manager_4.14-compat-arm64-signed.apk"
+        if [ -f "$COMPAT_APK" ] && { [ "$FORK" = "ReSuKISU" ] || [ "$FORK" = "ReSukiSU" ]; }; then
+          echo "Pairing kernel signature table with compatibility Manager..."
+          TMP_SIG=$(mktemp -d)
+          unzip -q "$COMPAT_APK" 'META-INF/*.RSA' -d "$TMP_SIG"
+          SIG=$(find "$TMP_SIG/META-INF" -type f -name '*.RSA' | head -n 1)
+          test -n "$SIG"
+          openssl pkcs7 -inform DER -in "$SIG" -print_certs -out "$TMP_SIG/cert.pem"
+          openssl x509 -in "$TMP_SIG/cert.pem" -outform DER -out "$TMP_SIG/cert.der"
+          CERT_SIZE=$(wc -c < "$TMP_SIG/cert.der")
+          CERT_HASH=$(sha256sum "$TMP_SIG/cert.der" | awk '{print $1}')
+          SIGN_H="drivers/kernelsu/manager/manager_sign.h"
+          SIGN_C="drivers/kernelsu/manager/apk_sign.c"
+          printf '\n// CI-paired Camellia 4.14 compatibility Manager\n#define EXPECTED_SIZE_CAMELLIA_COMPAT %s\n#define EXPECTED_HASH_CAMELLIA_COMPAT \"%s\"\n' "$CERT_SIZE" "$CERT_HASH" >> "$SIGN_H"
+          sed -i '/static apk_sign_key_t apk_sign_keys\[\] = {/a\    { EXPECTED_SIZE_CAMELLIA_COMPAT, EXPECTED_HASH_CAMELLIA_COMPAT }, /* Camellia compat Manager */' "$SIGN_C"
+          grep -q 'EXPECTED_HASH_CAMELLIA_COMPAT' "$SIGN_H"
+          echo "Paired compatibility certificate: size=$CERT_SIZE sha256=$CERT_HASH"
+          rm -rf "$TMP_SIG"
+        fi
+
         # Sinkronisasi folder UAPI & injeksi include path
         echo "🔧 Fixing KSU UAPI header directories & includes..."
         mkdir -p drivers/kernelsu/uapi
