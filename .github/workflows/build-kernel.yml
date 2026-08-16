@@ -162,7 +162,7 @@ jobs:
           # Android options (DEVTMPFS, SYSVIPC, TMPFS_XATTR, NF_TABLES, ...) that the
           # real flyme build shipped. Building from it => non-booting kernel. So use
           # the full config extracted from the known-good flyme boot image, already
-          # augmented with FT8722 + panel + KSU/SUSFS + SUS_MAP off.
+          # augmented with FT8722 + panel + KSU/SUSFS + SUS_MAP.
           if [ -f "$FULL" ]; then
             cp -f "$FULL" "$DC"
             echo "[defconfig] installed full config ($(wc -l < "$DC") lines)"
@@ -170,11 +170,13 @@ jobs:
             echo "::error::full defconfig payload missing at $FULL"; exit 1
           fi
           echo "=== sanity: core Android + FT8722 present ==="
-          for c in CONFIG_DEVTMPFS CONFIG_SYSVIPC CONFIG_TMPFS_XATTR CONFIG_NF_TABLES CONFIG_TOUCHSCREEN_FTS CONFIG_DRM_PANEL_FT8722_TIANMA_VDO CONFIG_KSU CONFIG_MTK_COMBO_WIFI CONFIG_MTK_COMBO_BT; do
+          for c in CONFIG_DEVTMPFS CONFIG_SYSVIPC CONFIG_TMPFS_XATTR CONFIG_NF_TABLES CONFIG_TOUCHSCREEN_FTS CONFIG_DRM_PANEL_FT8722_TIANMA_VDO CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_BT CONFIG_MTK_COMBO_WIFI CONFIG_MTK_COMBO_BT; do
             grep -qE "^$c=y" "$DC" && echo "  ok $c" || { echo "::error::$c missing in defconfig"; exit 1; }
           done
           grep -qE "CONFIG_TOUCHSCREEN_FTS_DIRECTORY=\"FT8722\"" "$DC" && echo "  ok FT8722 dir" || { echo "::error::FT8722 dir missing"; exit 1; }
-          grep -qE "^# CONFIG_KSU_SUSFS_SUS_MAP is not set" "$DC" && echo "  ok SUS_MAP off" || echo "  warn: SUS_MAP not explicitly off"
+          # SUS_MAP requires the matching task_mmu VFS hook; it is intentionally
+          # gated off until that hook is merged against this exact flyme tree.
+          grep -qE "^# CONFIG_KSU_SUSFS_SUS_MAP is not set" "$DC" && echo "  ok SUS_MAP gated off" || echo "  warn: SUS_MAP not explicitly off"
 
       - name: Inject FT8722 Touch Driver (flyme base)
         if: inputs.manifest_name == 'camellia'

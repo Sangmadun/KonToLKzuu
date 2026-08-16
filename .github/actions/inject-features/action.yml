@@ -206,9 +206,8 @@ runs:
           set_config "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT" "y"
           set_config "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT" "y"
           set_config "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT" "y"
-          # SUS_MAP disabled: its VFS hook lives in fs/proc/task_mmu.c show_smap(),
-          # whose structure differs too much on camellia 4.14 to merge safely.
-          # task_mmu.c is kept pristine; disabling SUS_MAP avoids a dangling hook.
+          # SUS_MAP requires the matching task_mmu VFS hook. Keep it disabled
+          # until that hook is merged against this exact flyme tree.
           set_config "CONFIG_KSU_SUSFS_SUS_MAP" "n"
         else
           sed -i '/CONFIG_KSU_SUSFS/d' "$DEFCONFIG"
