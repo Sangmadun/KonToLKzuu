@@ -92,20 +92,26 @@ runs:
         } # end attributes
 
         # boot shell variables
-        # Camellia uses a non-A/B boot partition. Resolve the real block path
-        # before AnyKernel setup: some TWRP/OrangeFox builds omit aliases used
-        # by the generic probe and abort before split_boot.
+        # Camellia recovery reports Virtual A/B and an active slot (for example
+        # _a). Resolve boot_<slot> first, then fall back to unsuffixed boot.
+        # This avoids AnyKernel's generic probe aborting on recoveries that only
+        # expose boot_a/boot_b under by-name.
+        _slot="$(getprop ro.boot.slot_suffix 2>/dev/null)";
+        [ -z "$_slot" ] && _slot="$(grep -o 'androidboot.slot_suffix=[^ ]*' /proc/cmdline 2>/dev/null | cut -d= -f2)";
+        case "$_slot" in _a|_b) ;; *) _slot="_a" ;; esac
         block=boot;
         is_slot_device=0;
-        for _p in \
-          /dev/block/by-name/boot \
-          /dev/block/bootdevice/by-name/boot \
-          /dev/block/platform/*/by-name/boot \
-          /dev/block/platform/*/*/by-name/boot; do
-          if [ -e "$_p" ]; then
-            block="$_p";
-            break;
-          fi;
+        for _n in "boot${_slot}" boot; do
+          for _p in \
+            "/dev/block/by-name/${_n}" \
+            "/dev/block/bootdevice/by-name/${_n}" \
+            /dev/block/platform/*/by-name/${_n} \
+            /dev/block/platform/*/*/by-name/${_n}; do
+            if [ -e "$_p" ]; then
+              block="$_p";
+              break 2;
+            fi;
+          done;
         done;
         ramdisk_compression=auto;
         patch_vbmeta_flag=auto;
