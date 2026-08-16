@@ -86,6 +86,28 @@ runs:
           echo "[3] susfs.o already present in fs/Makefile"
         fi
 
+        # Current ReSukiSU's inline-hook contract requires the setresuid hook in
+        # kernel/sys.c. Add the real upstream-documented call instead of weakening
+        # or deleting ReSukiSU's hook validator.
+        echo "[3b] Integrating current ReSukiSU setresuid inline hook..."
+        python3 - <<'PY'
+        from pathlib import Path
+        p = Path('kernel/sys.c')
+        s = p.read_text()
+        if 'extern int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid);' not in s:
+            anchor = '#include <linux/uidgid.h>'
+            if anchor not in s:
+                raise SystemExit('uidgid include anchor not found in kernel/sys.c')
+            s = s.replace(anchor, anchor + '\n\n#ifdef CONFIG_KSU_SUSFS\nextern int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid);\n#endif', 1)
+        if '(void)ksu_handle_setresuid(ruid, euid, suid);' not in s:
+            anchor = 'long __sys_setresuid(uid_t ruid, uid_t euid, uid_t suid)\n{'
+            if anchor not in s:
+                raise SystemExit('__sys_setresuid anchor not found in kernel/sys.c')
+            s = s.replace(anchor, anchor + '\n#ifdef CONFIG_KSU_SUSFS\n\t(void)ksu_handle_setresuid(ruid, euid, suid);\n#endif', 1)
+        p.write_text(s)
+        PY
+        grep -n 'ksu_handle_setresuid' kernel/sys.c
+
         # ---------------------------------------------------------------
         # 4. Sanity: no leftover conflict markers, version correct.
         # ---------------------------------------------------------------
