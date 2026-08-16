@@ -173,6 +173,8 @@ jobs:
           for c in CONFIG_DEVTMPFS CONFIG_SYSVIPC CONFIG_TMPFS_XATTR CONFIG_NF_TABLES CONFIG_TOUCHSCREEN_FTS CONFIG_DRM_PANEL_FT8722_TIANMA_VDO CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_BT CONFIG_MTK_COMBO_WIFI CONFIG_MTK_COMBO_BT; do
             grep -qE "^$c=y" "$DC" && echo "  ok $c" || { echo "::error::$c missing in defconfig"; exit 1; }
           done
+          grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC" || { echo "::error::ReSukiSU manual hooks must be enabled on 4.14"; exit 1; }
+          grep -q '^# CONFIG_KSU_TRACEPOINT_HOOK is not set$' "$DC" || { echo "::error::tracepoint hooks must stay disabled on 4.14"; exit 1; }
           grep -qE "CONFIG_TOUCHSCREEN_FTS_DIRECTORY=\"FT8722\"" "$DC" && echo "  ok FT8722 dir" || { echo "::error::FT8722 dir missing"; exit 1; }
           # SUS_MAP requires the matching task_mmu VFS hook; it is intentionally
           # gated off until that hook is merged against this exact flyme tree.
@@ -227,15 +229,16 @@ jobs:
             CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_DEBUG_INFO CONFIG_DEBUG_INFO_BTF \
             CONFIG_TOUCHSCREEN_FTS CONFIG_DRM_PANEL_FT8722_TIANMA_VDO \
             CONFIG_DEVTMPFS CONFIG_SYSVIPC CONFIG_POSIX_MQUEUE CONFIG_IPC_NS \
-            CONFIG_TMPFS_XATTR CONFIG_NF_TABLES CONFIG_BT CONFIG_BT_RFCOMM \
-            CONFIG_BT_BNEP CONFIG_BT_HIDP CONFIG_CFG80211 CONFIG_MTK_COMBO \
+            CONFIG_TMPFS_XATTR CONFIG_NF_TABLES CONFIG_ANDROID_BINDER_IPC \
+            CONFIG_BT CONFIG_BT_RFCOMM CONFIG_BT_BNEP CONFIG_BT_HIDP \
+            CONFIG_WLAN CONFIG_CFG80211 CONFIG_MTK_COMBO \
             CONFIG_MTK_COMBO_CHIP_CONSYS_6833 CONFIG_MTK_COMBO_WIFI \
             CONFIG_MTK_COMBO_BT CONFIG_MTK_BTIF CONFIG_SND_SOC_MTK_BTCVSD; do
             grep -q "^${c}=y$" "$CFG" || { echo "::error::$c is not built-in"; exit 1; }
           done
           grep -q '^CONFIG_TOUCHSCREEN_FTS_DIRECTORY="FT8722"$' "$CFG"
           grep -q '^# CONFIG_KSU_TRACEPOINT_HOOK is not set$' "$CFG"
-          grep -q '^# CONFIG_KSU_MANUAL_HOOK is not set$' "$CFG"
+          grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$CFG"
           grep -q '^# CONFIG_KSU_SUSFS_SUS_MAP is not set$' "$CFG"
           test -n "${KSU_UPSTREAM_COMMIT:-}"
           test -s "$BOOT/Image"
@@ -288,7 +291,8 @@ jobs:
           GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
         run: |
           python3 .github/scripts/telegram_notify.py failure
-          gh run cancel ${{ github.run_id }}
+          # Do not cancel the current run from its own GITHUB_TOKEN: GitHub
+          # returns 403 and masks the original build failure.
           
   # =========================================================================
   # JOB 2: BUILD MANAGER APP
@@ -362,8 +366,17 @@ jobs:
           [ "${#PAYLOADS[@]}" -eq 1 ] || { echo "::error::expected exactly one kernel payload"; exit 1; }
           test -s release_assets/full.config
           test -s release_assets/ksu_upstream_commit.txt
-          unzip -p "$ZIP" anykernel.sh | grep -q 'device.name1=camellia'
-          unzip -p "$ZIP" anykernel.sh | grep -q 'kernel.string=Lotus Kernel for Xiaomi Camellia'
+          unzip -p "$ZIP" anykernel.sh | grep -qE 'device.name1=camellia|device.name1=camellian'
+          unzip -p "$ZIP" anykernel.sh | grep -qE 'block=auto|block=boot'
+          unzip -p "$ZIP" anykernel.sh | grep -q 'is_slot_device=auto'
+          # The flash wrapper must be the proven OrangeFox donor wrapper, not
+          # a fresh AnyKernel3 engine or a nested ZIP accidentally shipped as payload.
+          unzip -p "$ZIP" orangefox_wrapper_source.txt | grep -q 'v7-camellia-universal/LotusKernel-Camellia-v7-OrangeFox.zip'
+          unzip -Z1 "$ZIP" | grep -q '^tools/ak3-core.sh$'
+          unzip -Z1 "$ZIP" | grep -q '^META-INF/com/google/android/update-binary$'
+          if unzip -Z1 "$ZIP" | grep -qE '(^|/)LotusKernel.*\.zip$'; then
+            echo "::error::nested kernel ZIP found inside flash ZIP"; exit 1
+          fi
           TMP=$(mktemp -d)
           unzip -p "$ZIP" "${PAYLOADS[0]}" > "$TMP/payload"
           gzip -t "$TMP/payload"

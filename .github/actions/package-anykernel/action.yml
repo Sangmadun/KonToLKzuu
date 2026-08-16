@@ -24,49 +24,79 @@ runs:
     - name: Package AnyKernel3 & Generate SHA256
       shell: bash
       run: |
-        if [ ! -d "AnyKernel3" ]; then
-          echo "📥 Cloning AnyKernel3 repository..."
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
-        fi
+        # Use the exact inner wrapper from the previously proven OrangeFox
+        # release. A fresh upstream AnyKernel3 wrapper is NOT equivalent on
+        # camellia/MTK Virtual A/B and can fail with OrangeFox ERROR: 1.
+        set -euo pipefail
+        OUT_DIR="${GITHUB_WORKSPACE}/kernel-source/out/arch/arm64/boot"
+        test -s "${OUT_DIR}/Image.gz-dtb" || { echo "::error::Image.gz-dtb missing"; exit 1; }
+        DONOR_URL="https://github.com/Sangmadun/KonToLKzuu/releases/download/v7-camellia-universal/LotusKernel-Camellia-v7-OrangeFox.zip"
+        rm -rf AnyKernel3 .orangefox-donor
+        mkdir -p .orangefox-donor
+        curl -fL --retry 3 "$DONOR_URL" -o .orangefox-donor/donor.zip
+        unzip -q .orangefox-donor/donor.zip -d .orangefox-donor/outer
+        INNER=$(find .orangefox-donor/outer -maxdepth 1 -type f -name '*.zip' | head -1)
+        test -s "$INNER" || { echo "::error::OrangeFox donor inner ZIP missing"; exit 1; }
+        unzip -q "$INNER" -d AnyKernel3
+        rm -f AnyKernel3/Image AnyKernel3/Image.gz AnyKernel3/Image.gz-dtb
+        cp "${OUT_DIR}/Image.gz-dtb" AnyKernel3/Image.gz-dtb
 
-        cd AnyKernel3
+        # Keep the donor's META-INF/update-binary and ak3-core byte-for-byte.
+        # Only the kernel payload is replaced; this is the validated transplant.
+        test -s AnyKernel3/tools/ak3-core.sh
+        test -s AnyKernel3/META-INF/com/google/android/update-binary
+        grep -q 'block=auto' AnyKernel3/anykernel.sh
+        grep -q 'is_slot_device=auto' AnyKernel3/anykernel.sh
 
-        # -----------------------------------------------------------------
-        # PENANGANAN KERNEL IMAGE
-        # -----------------------------------------------------------------
-        OUT_DIR="../kernel-source/out/arch/arm64/boot"
-
-        if [ -f "${OUT_DIR}/Image.gz-dtb" ]; then
-          echo "✅ Found Image.gz-dtb! Copying to AnyKernel3..."
-          cp "${OUT_DIR}/Image.gz-dtb" .
-        elif [ -f "${OUT_DIR}/Image.gz" ]; then
-          echo "✅ Found Image.gz! Copying to AnyKernel3..."
-          cp "${OUT_DIR}/Image.gz" .
-        elif [ -f "${OUT_DIR}/Image" ]; then
-          echo "✅ Found Image! Copying to AnyKernel3..."
-          cp "${OUT_DIR}/Image" .
-        else
-          echo "❌ Error: No valid kernel image found in ${OUT_DIR}!"
-          exit 1
-        fi
-
-        [ -f "${OUT_DIR}/dtb" ] && cp "${OUT_DIR}/dtb" .
-        [ -f "${OUT_DIR}/dtbo.img" ] && cp "${OUT_DIR}/dtbo.img" .
-
-        # -----------------------------------------------------------------
-        # TAGGING & NAMING SETUP
-        # -----------------------------------------------------------------
         KSU_NAME="${{ inputs.ksu_fork }}"
         [ -z "$KSU_NAME" ] && KSU_NAME="NoKSU"
-
         FEATURE_TAGS=""
         [ "${{ inputs.include_susfs }}" = "true" ] && FEATURE_TAGS="${FEATURE_TAGS}-SUSFS"
         [ "${{ inputs.include_bbg }}" = "true" ] && FEATURE_TAGS="${FEATURE_TAGS}-BBG"
         [ "${{ inputs.include_bbr }}" = "true" ] && FEATURE_TAGS="${FEATURE_TAGS}-BBR"
 
+        # Do not add a second/nested ZIP or dtb_check payload to the flash ZIP.
+        find AnyKernel3 -maxdepth 1 -type f -name '*.zip' -delete
+        rm -rf AnyKernel3/dtb_check
+
+        # Record the exact donor wrapper provenance for release auditing.
+        printf '%s\n' "$DONOR_URL" > AnyKernel3/orangefox_wrapper_source.txt
+        printf '%s\n' "$(sha256sum AnyKernel3/tools/ak3-core.sh)" > AnyKernel3/orangefox_ak3_core.sha256
+        printf '%s\n' "$(sha256sum AnyKernel3/META-INF/com/google/android/update-binary)" > AnyKernel3/orangefox_update_binary.sha256
+
         # -----------------------------------------------------------------
-        # GENERATE ANYKERNEL.SH
+        # BUILD ZIP & SHA256 DI ROOT WORKSPACE (..)
         # -----------------------------------------------------------------
+        ZIP_NAME="LotusKernel-Camellia-${KSU_NAME}${FEATURE_TAGS}-$(date +%Y%m%d_%H%M).zip"
+        echo "📦 Creating proven OrangeFox-compatible ZIP: ${ZIP_NAME}"
+        cd AnyKernel3
+        zip -r9 "../${ZIP_NAME}" . -x '.git/*' '*.zip' '*placeholder'
+        cd ..
+        sha256sum "${ZIP_NAME}" > "${ZIP_NAME}.sha256"
+        echo "✅ Created SHA256 checksum: ${ZIP_NAME}.sha256"
+
+        # -----------------------------------------------------------------
+        # GENERATE CHANGELOG & COMMIT LINK
+        # -----------------------------------------------------------------
+        if [ -d "kernel-source" ]; then
+          cd kernel-source
+          git log -n 10 --pretty=format:"• %h - %s (%cr) <%an>" > ../changelog.txt 2>/dev/null || echo "• Lotus Kernel Build Release" > ../changelog.txt
+          REMOTE_URL=$(git config --get remote.origin.url 2>/dev/null | sed 's/\.git$//' || true)
+          HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || true)
+          if [ -n "$REMOTE_URL" ] && [ -n "$HEAD_SHA" ]; then
+            echo "${REMOTE_URL}/commit/${HEAD_SHA}" > ../commit_link.txt
+          else
+            echo "https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}" > ../commit_link.txt
+          fi
+          cd ..
+        else
+          echo "• Lotus Kernel Build Release" > changelog.txt
+          echo "https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}" > commit_link.txt
+        fi
+        echo "✅ Generated changelog.txt & commit_link.txt"
+        exit 0
+
+        # Legacy generator retained below for history; unreachable by design.
         cat << 'EOF_AK3' > anykernel.sh
         # AnyKernel3 Ramdisk Mod Script for Xiaomi Camellia (MT6833)
         # osm0sis @ xda-developers

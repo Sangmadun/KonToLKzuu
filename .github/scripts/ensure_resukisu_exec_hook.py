@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 from pathlib import Path
 
-p = Path("kernel-source/fs/exec.c")
+# The composite apply-susfs action runs after `cd kernel-source`, while
+# standalone/local checks may run from the repository root. Resolve both
+# layouts explicitly so the hook is applied to the source that will compile.
+_candidates = [Path("fs/exec.c"), Path("kernel-source/fs/exec.c")]
+p = next((candidate for candidate in _candidates if candidate.is_file()), None)
+if p is None:
+    raise SystemExit("fs/exec.c not found (checked fs/exec.c and kernel-source/fs/exec.c)")
 s = p.read_text()
 
 decl = """#ifdef CONFIG_KSU_MANUAL_HOOK
