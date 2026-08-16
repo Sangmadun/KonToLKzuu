@@ -35,7 +35,7 @@ set_config "CONFIG_DEBUG_INFO_BTF" "y" "$DEFCONFIG_FILE"
 # CONFIG_DEBUG_INFO_BTF=y is misleading and vmlinux has no .BTF section.
 python3 - <<'PY'
 from pathlib import Path
-p = Path("kernel-source/scripts/link-vmlinux.sh")
+p = Path("scripts/link-vmlinux.sh")
 s = p.read_text()
 marker = 'if [ -n "${CONFIG_KALLSYMS}" ]; then\n'
 block = '''btf_vmlinux_bin_o=""
