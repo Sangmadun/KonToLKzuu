@@ -101,7 +101,8 @@ jobs:
         run: |
           sudo apt purge -y man-db /var/lib/man-db/auto-update || true
           sudo apt update -qq
-          sudo apt install -y build-essential bc libncurses5-dev libssl-dev bison flex libelf-dev zip unzip git ccache curl aria2 jq
+          sudo apt install -y build-essential bc libncurses5-dev libssl-dev bison flex libelf-dev dwarves zip unzip git ccache curl aria2 jq
+          pahole --version
 
       - name: Download Toolchains
         uses: ./.github/actions/download-toolchain

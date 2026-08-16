@@ -21,10 +21,13 @@ set_config() {
   fi
 }
 
-set_config "CONFIG_KPROBES" "y" "$DEFCONFIG_FILE"
-set_config "CONFIG_HAVE_KPROBES" "y" "$DEFCONFIG_FILE"
-set_config "CONFIG_KPROBE_EVENTS" "y" "$DEFCONFIG_FILE"
+# Manual ReSukiSU input hooks require KPROBES disabled to avoid accidental
+# safe-mode triggers on volume-down during boot. Never override the audited
+# camellia defconfig here.
+set_config "CONFIG_KPROBES" "n" "$DEFCONFIG_FILE"
 set_config "CONFIG_KSU" "y" "$DEFCONFIG_FILE"
+set_config "CONFIG_DEBUG_INFO" "y" "$DEFCONFIG_FILE"
+set_config "CONFIG_DEBUG_INFO_BTF" "y" "$DEFCONFIG_FILE"
 
 # Prepare Toolchain & Ccache
 rm -f "$GITHUB_WORKSPACE/toolchain/clang/bin/ld"
