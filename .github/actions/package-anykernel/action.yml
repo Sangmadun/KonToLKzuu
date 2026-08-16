@@ -92,8 +92,11 @@ runs:
         } # end attributes
 
         # boot shell variables
-        block=auto;
-        is_slot_device=auto;
+        # Camellia uses a non-A/B boot partition exposed as /dev/block/by-name/boot.
+        # Do not rely on AnyKernel's generic auto probe: some TWRP/OrangeFox
+        # builds omit the aliases used by the probe and abort before split_boot.
+        block=boot;
+        is_slot_device=0;
         ramdisk_compression=auto;
         patch_vbmeta_flag=auto;
 
@@ -128,7 +131,6 @@ runs:
 
         split_boot;
         flash_boot;
-        flash_dtbo;
         EOF_AK3
 
         # -----------------------------------------------------------------
