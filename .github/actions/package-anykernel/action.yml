@@ -35,8 +35,10 @@ runs:
         # AnyKernel backend, it resolves bootdevice/by-name and falls back
         # to the platform by-name directory used by OrangeFox/TWRP.
         cp -f ../patches/camellia-anykernel/update-binary META-INF/com/google/android/update-binary
+        cp -f ../patches/camellia-anykernel/ak3-core.sh tools/ak3-core.sh
         chmod 0755 META-INF/com/google/android/update-binary
-        sha256sum META-INF/com/google/android/update-binary
+        chmod 0755 tools/ak3-core.sh
+        sha256sum META-INF/com/google/android/update-binary tools/ak3-core.sh
 
         # -----------------------------------------------------------------
         # PENANGANAN KERNEL IMAGE
@@ -99,27 +101,10 @@ runs:
         } # end attributes
 
         # boot shell variables
-        # Camellia recovery reports Virtual A/B and an active slot (for example
-        # _a). Resolve boot_<slot> first, then fall back to unsuffixed boot.
-        # This avoids AnyKernel's generic probe aborting on recoveries that only
-        # expose boot_a/boot_b under by-name.
-        _slot="$(getprop ro.boot.slot_suffix 2>/dev/null)";
-        [ -z "$_slot" ] && _slot="$(grep -o 'androidboot.slot_suffix=[^ ]*' /proc/cmdline 2>/dev/null | cut -d= -f2)";
-        case "$_slot" in _a|_b) ;; *) _slot="_a" ;; esac
+        # Match the known-working Flyme Camellia package exactly.
         block=boot;
-        is_slot_device=0;
-        for _n in "boot${_slot}" boot; do
-          for _p in \
-            "/dev/block/by-name/${_n}" \
-            "/dev/block/bootdevice/by-name/${_n}" \
-            /dev/block/platform/*/by-name/${_n} \
-            /dev/block/platform/*/*/by-name/${_n}; do
-            if [ -e "$_p" ]; then
-              block="$_p";
-              break 2;
-            fi;
-          done;
-        done;
+        is_slot_device=auto;
+        no_block_display=1;
         ramdisk_compression=auto;
         patch_vbmeta_flag=auto;
 
@@ -154,6 +139,7 @@ runs:
 
         split_boot;
         flash_boot;
+        flash_dtbo;
         EOF_AK3
 
         # -----------------------------------------------------------------
