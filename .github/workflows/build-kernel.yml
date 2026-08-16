@@ -231,7 +231,7 @@ jobs:
           grep -qE '^CONFIG_TOUCHSCREEN_FTS_DIRECTORY="FT8722"$' "$DC" || { echo "::error::FT8722 directory missing"; exit 1; }
           grep -qE '^CONFIG_KSU_SUSFS_SUS_MAP=n$|^# CONFIG_KSU_SUSFS_SUS_MAP is not set$' "$DC" || { echo "::error::unexpected SUS_MAP state"; exit 1; }
           grep -q 'SUSFS_VERSION.*2\.2\.0' "$SRC/include/linux/susfs.h" || { echo "::error::SUSFS 2.2.0 header not found"; exit 1; }
-          grep -q 'EXPECTED_HASH_RESUKISU' "$SRC/drivers/kernelsu/manager_sign.h" || { echo "::error::ReSukiSU signature table missing"; exit 1; }
+          grep -q 'EXPECTED_HASH_RESUKISU' "$SRC/drivers/kernelsu/manager/manager_sign.h" || { echo "::error::ReSukiSU signature table missing"; exit 1; }
           echo "✅ final kernel config: KSU + multi-manager + SUSFS 2.2.0 + FT8722"
           echo "✅ ReSukiSU signature table present"
 
@@ -271,7 +271,10 @@ jobs:
           GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
         run: |
           python3 .github/scripts/telegram_notify.py failure
-          gh run cancel ${{ github.run_id }}
+          # The runner's GITHUB_TOKEN cannot cancel this reusable-workflow run
+          # from inside the job (403). Do not turn the original error into a
+          # second misleading failure.
+          true
           
   # =========================================================================
   # JOB 2: BUILD MANAGER APP
