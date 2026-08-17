@@ -291,15 +291,7 @@ jobs:
             grep -q "$COMPAT_HASH" "$SRC/drivers/kernelsu/manager/manager_sign.h" || { echo "::error::compat hash missing from manager_sign.h"; exit 1; }
             grep -q 'EXPECTED_HASH_RESUKISU' "$SRC/drivers/kernelsu/manager/apk_sign.c" || { echo "::error::ReSukiSU signature key missing from apk_sign.c"; exit 1; }
             grep -q "$COMPAT_HASH" "$SRC/out/vmlinux" || { echo "::error::compat hash missing from final vmlinux"; exit 1; }
-            python3 - "$SRC/out/arch/arm64/boot/Image.gz-dtb" "$COMPAT_HASH" <<'PY'
-            import gzip, sys
-            image, digest = sys.argv[1], sys.argv[2].encode()
-            with gzip.open(image, 'rb') as f:
-                payload = f.read()
-            if digest not in payload:
-                raise SystemExit('compat hash missing from exact packaged Image.gz-dtb')
-            print(f'✅ compatibility Manager certificate paired in vmlinux and packaged Image: size={len(digest)//2} sha256={digest.decode()}')
-            PY
+            python3 -c 'import gzip,sys; payload=gzip.open(sys.argv[1],"rb").read(); digest=sys.argv[2].encode(); (digest in payload) or (_ for _ in ()).throw(SystemExit("compat hash missing from exact packaged Image.gz-dtb")); print("✅ compatibility Manager certificate found in packaged Image")' "$SRC/out/arch/arm64/boot/Image.gz-dtb" "$COMPAT_HASH"
             echo "✅ compatibility Manager certificate paired in vmlinux and packaged Image: size=$COMPAT_SIZE sha256=$COMPAT_HASH"
           fi
           echo "✅ final kernel config: KSU + multi-manager + SUSFS 2.2.0 + FT8722"
