@@ -115,6 +115,14 @@ runs:
           grep -q '#elif defined(CONFIG_KSU_SUSFS) && !defined(CONFIG_KSU_MANUAL_HOOK)' "$KSUD_RUNTIME"
         fi
 
+        # Embed an ASCII ABI marker in the built-in KSU core. The dispatch object
+        # is not guaranteed to be linked on every legacy config; core/init.c is.
+        CORE_INIT="drivers/kernelsu/core/init.c"
+        if [ -f "$CORE_INIT" ] && ! grep -q 'resukisu_kernel_abi_35002' "$CORE_INIT"; then
+          sed -i '1i__attribute__((used, section(".rodata"))) static const char resukisu_kernel_abi_35002[] = "ReSukiSU-KERNEL-ABI-35002";' "$CORE_INIT"
+        fi
+        grep -q 'ReSukiSU-KERNEL-ABI-35002' "$CORE_INIT"
+
         # Injeksi ksu_cred secara presisi
         echo "🔧 Injecting extern ksu_cred declaration safely into KernelSU C files..."
         find drivers/kernelsu/ -type f -name "*.c" | while read -r file; do
