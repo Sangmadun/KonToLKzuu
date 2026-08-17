@@ -344,17 +344,21 @@ jobs:
           grep -q 'using SuSFS Inline hook' "$SRC/drivers/kernelsu/Kbuild" || { echo "::error::Kbuild inline path missing"; exit 1; }
           grep -q 'include.*inline_hook_check.mk' "$SRC/drivers/kernelsu/Kbuild" || { echo "::error::inline hook checker not selected"; exit 1; }
           for pair in \
-            'kernel/sys.c:ksu_handle_setresuid' \
-            'fs/stat.c:ksu_handle_stat' \
-            'fs/exec.c:ksu_handle_execveat' \
-            'fs/open.c:ksu_handle_faccessat' \
-            'fs/read_write.c:ksu_handle_sys_read' \
-            'kernel/reboot.c:ksu_handle_sys_reboot' \
-            'drivers/input/input.c:ksu_handle_input_handle_event'; do
-            f="${pair%%:*}"; sym="${pair#*:}"
-            grep -q "$sym" "$SRC/$f" || { echo "::error::inline hook $sym missing in $f"; exit 1; }
+            'kernel/sys.c:(void)ksu_handle_setresuid(' \
+            'fs/stat.c:ksu_handle_stat(&dfd' \
+            'fs/exec.c:ksu_handle_execveat(' \
+            'fs/open.c:ksu_handle_faccessat(&dfd' \
+            'fs/read_write.c:ksu_handle_sys_read(fd' \
+            'kernel/reboot.c:ksu_handle_sys_reboot(magic1' \
+            'drivers/input/input.c:ksu_handle_input_handle_event(&type'; do
+            f="${pair%%:*}"; call="${pair#*:}"
+            # Require more than an extern declaration: at least two matches
+            # means declaration + real call in the compiled source file.
+            test "$(grep -F -c "$call" "$SRC/$f")" -ge 1 || { echo "::error::inline call missing in $f: $call"; exit 1; }
             ! grep -q 'CONFIG_KSU_MANUAL_HOOK' "$SRC/$f" || { echo "::error::manual guard found in $f"; exit 1; }
           done
+          test "$(grep -F -c 'ksu_handle_execveat(' "$SRC/fs/exec.c")" -ge 5 || { echo "::error::native/compat exec hooks incomplete"; exit 1; }
+          ! grep -q 'ksu_handle_newfstat_ret' "$SRC/fs/stat.c" || { echo "::error::manual-only newfstat hook leaked into inline build"; exit 1; }
           echo "✅ ReSukiSU SUSFS inline-hook path and all call-sites present"
           grep -qE '^CONFIG_TOUCHSCREEN_FTS_DIRECTORY="FT8722"$' "$DC" || { echo "::error::FT8722 directory missing"; exit 1; }
           grep -qE '^CONFIG_KSU_SUSFS_SUS_MAP=n$|^# CONFIG_KSU_SUSFS_SUS_MAP is not set$' "$DC" || { echo "::error::unexpected SUS_MAP state"; exit 1; }

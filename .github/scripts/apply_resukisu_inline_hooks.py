@@ -42,7 +42,6 @@ SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
 	int error;
 """, """#ifdef CONFIG_KSU_SUSFS
 extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
-extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);
 #endif
 
 #if !defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_SYS_NEWFSTATAT)
@@ -55,28 +54,6 @@ SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
 	ksu_handle_stat(&dfd, &filename, &flag);
 #endif
 """, "stat")
-
-once("fs/stat.c", """SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user *, statbuf)
-{
-	struct kstat stat;
-	int error = vfs_fstat(fd, &stat);
-
-	if (!error)
-		error = cp_new_stat(&stat, statbuf);
-
-	return error;
-}""", """SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user *, statbuf)
-{
-	struct kstat stat;
-	int error = vfs_fstat(fd, &stat);
-
-	if (!error)
-		error = cp_new_stat(&stat, statbuf);
-#ifdef CONFIG_KSU_SUSFS
-	ksu_handle_newfstat_ret(&fd, &statbuf);
-#endif
-	return error;
-}""", "newfstat-return")
 
 once("fs/exec.c", """int do_execve(struct filename *filename,
 	const char __user *const __user *__argv,
