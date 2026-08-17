@@ -80,6 +80,20 @@ runs:
         file resukisu-bootstrap/ksud resukisu-bootstrap/libadbroot.so
         sha256sum resukisu-bootstrap/ksud resukisu-bootstrap/libadbroot.so
 
+        # Bundle the official OverlayFS metamodule as a separate, retryable
+        # userspace payload. It is installed only by Android init after ksud
+        # succeeds; recovery never executes it.
+        META_URL="https://github.com/KernelSU-Modules-Repo/meta-overlayfs/releases/download/v1.3.1/meta-overlayfs-13100-1.3.1.zip"
+        curl --fail --location --retry 3 --connect-timeout 15 --max-time 120 "$META_URL" \
+          -o resukisu-bootstrap/meta-overlayfs-13100-1.3.1.zip
+        unzip -t resukisu-bootstrap/meta-overlayfs-13100-1.3.1.zip >/dev/null
+        unzip -p resukisu-bootstrap/meta-overlayfs-13100-1.3.1.zip module.prop | grep -q '^metamodule=1$'
+        sha256sum resukisu-bootstrap/meta-overlayfs-13100-1.3.1.zip
+        cp "$GITHUB_WORKSPACE/.github/scripts/ksud_bootstrap_meta.sh" resukisu-bootstrap/bootstrap-meta.sh
+        chmod 0755 resukisu-bootstrap/bootstrap-meta.sh
+        bash -n resukisu-bootstrap/bootstrap-meta.sh
+        echo "✅ official meta-overlayfs payload verified"
+
         [ -f "${OUT_DIR}/dtb" ] && cp "${OUT_DIR}/dtb" .
         [ -f "${OUT_DIR}/dtbo.img" ] && cp "${OUT_DIR}/dtbo.img" .
 
@@ -171,12 +185,15 @@ runs:
           mkdir -p "$bootstrap" || abort "Cannot create /data/adb bootstrap directory";
           unzip -p "$ZIPFILE" resukisu-bootstrap/ksud > "$bootstrap/ksud" || abort "Cannot extract official ksud";
           unzip -p "$ZIPFILE" resukisu-bootstrap/libadbroot.so > "$bootstrap/libadbroot.so" || abort "Cannot extract libadbroot";
-          chmod 0755 "$bootstrap/ksud" "$bootstrap/libadbroot.so";
-          # Do not execute ksud from recovery: it requires the Android
-          # userspace/SELinux domain. The kernel init hook runs `install`
-          # after post-fs-data in the real Android environment.
+          unzip -p "$ZIPFILE" resukisu-bootstrap/meta-overlayfs-13100-1.3.1.zip > "$bootstrap/meta-overlayfs-13100-1.3.1.zip" || abort "Cannot extract meta-overlayfs";
+          unzip -p "$ZIPFILE" resukisu-bootstrap/bootstrap-meta.sh > "$bootstrap/bootstrap-meta.sh" || abort "Cannot extract metamodule bootstrap";
+          chmod 0755 "$bootstrap/ksud" "$bootstrap/libadbroot.so" "$bootstrap/bootstrap-meta.sh";
+          # Do not execute ksud or the metamodule from recovery. Both require
+          # Android userspace, mount namespaces, and SELinux policy.
           [ -x "$bootstrap/ksud" ] || abort "ksud bootstrap missing after extraction";
-          ui_print " [✓] ReSukiSU userspace bootstrap staged; Android init will install it";
+          [ -x "$bootstrap/bootstrap-meta.sh" ] || abort "metamodule bootstrap missing after extraction";
+          [ -s "$bootstrap/meta-overlayfs-13100-1.3.1.zip" ] || abort "meta-overlayfs payload missing after extraction";
+          ui_print " [✓] ReSukiSU and meta-overlayfs payloads staged; Android init will install them";
         }
         install_resukisu_userspace;
         EOF_AK3

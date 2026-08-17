@@ -159,9 +159,12 @@ runs:
             echo "::error::ksud bootstrap executable path missing"; exit 1;
           }
           grep -Fq 'install --libadbroot /data/adb/ksu-bootstrap/libadbroot.so' "$KSUD_FILE" || {
-            echo "::error::ksud install arguments missing"; exit 1;
+            echo "::error::ksud install argument missing"; exit 1;
           }
-          echo "✅ ksud install is scheduled in Android post-fs-data"
+          grep -Fq '/data/adb/ksu-bootstrap/bootstrap-meta.sh' "$KSUD_FILE" || {
+            echo "::error::metamodule bootstrap command missing"; exit 1;
+          }
+          echo "✅ ksud and metamodule install are scheduled in Android post-fs-data"
 
           sed -i '1i#include <linux/types.h>\nextern bool ksu_no_custom_rc;\nextern bool ksu_late_loaded;' "$KSUD_FILE"
 

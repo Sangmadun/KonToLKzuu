@@ -7,6 +7,8 @@ INSTALL = (
     '    "\\texec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " '
     '"/data/adb/ksu-bootstrap/ksud" '
     '" install --libadbroot /data/adb/ksu-bootstrap/libadbroot.so\\n"\n'
+    '    "\\texec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " '
+    '"/data/adb/ksu-bootstrap/bootstrap-meta.sh\\n"\n'
 )
 
 
