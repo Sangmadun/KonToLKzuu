@@ -4,9 +4,9 @@ from pathlib import Path
 import sys
 
 INSTALL = (
-    '    "\\texec u:r:" KERNEL_SU_DOMAIN '
-    '":s0 root -- " KSUD_PATH '
-    '" install --libadbroot /data/adb/ksu/lib/libadbroot.so\\n"\n'
+    '    "\\texec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " '
+    '"/data/adb/ksu-bootstrap/ksud" '
+    '" install --libadbroot /data/adb/ksu-bootstrap/libadbroot.so\\n"\n'
 )
 
 
@@ -16,7 +16,7 @@ def main() -> int:
         return 2
     path = Path(sys.argv[1])
     text = path.read_text()
-    marker = "install --libadbroot /data/adb/ksu/lib/libadbroot.so"
+    marker = "install --libadbroot /data/adb/ksu-bootstrap/libadbroot.so"
     if marker in text:
         print("ksud install command already present")
         return 0
