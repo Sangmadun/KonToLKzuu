@@ -244,6 +244,20 @@ jobs:
           grep -qE '^CONFIG_KSU_SUSFS_SUS_MAP=n$|^# CONFIG_KSU_SUSFS_SUS_MAP is not set$' "$DC" || { echo "::error::unexpected SUS_MAP state"; exit 1; }
           grep -q 'SUSFS_VERSION.*2\.2\.0' "$SRC/include/linux/susfs.h" || { echo "::error::SUSFS 2.2.0 header not found"; exit 1; }
           grep -q 'EXPECTED_HASH_RESUKISU' "$SRC/drivers/kernelsu/manager/manager_sign.h" || { echo "::error::ReSukiSU signature table missing"; exit 1; }
+          if [ -f "$GITHUB_WORKSPACE/output_apk/ReSuKISU_Manager_4.14-compat-arm64-signed.apk" ]; then
+            rm -rf /tmp/compat-sign /tmp/compat-cert.pem /tmp/compat-cert.der
+            unzip -q "$GITHUB_WORKSPACE/output_apk/ReSuKISU_Manager_4.14-compat-arm64-signed.apk" 'META-INF/*.RSA' -d /tmp/compat-sign
+            SIG=$(find /tmp/compat-sign/META-INF -type f -name '*.RSA' | head -n 1)
+            test -n "$SIG"
+            openssl pkcs7 -inform DER -in "$SIG" -print_certs -out /tmp/compat-cert.pem
+            openssl x509 -in /tmp/compat-cert.pem -outform DER -out /tmp/compat-cert.der
+            COMPAT_HASH=$(sha256sum /tmp/compat-cert.der | awk '{print $1}')
+            COMPAT_SIZE=$(wc -c < /tmp/compat-cert.der)
+            grep -q "$COMPAT_HASH" "$SRC/drivers/kernelsu/manager/manager_sign.h" || { echo "::error::compat hash missing from manager_sign.h"; exit 1; }
+            grep -q 'EXPECTED_HASH_CAMELLIA_COMPAT' "$SRC/drivers/kernelsu/manager/apk_sign.c" || { echo "::error::compat key missing from apk_sign.c"; exit 1; }
+            grep -q "$COMPAT_HASH" "$SRC/out/vmlinux" || { echo "::error::compat hash missing from final vmlinux"; exit 1; }
+            echo "✅ compatibility Manager certificate paired: size=$COMPAT_SIZE sha256=$COMPAT_HASH"
+          fi
           echo "✅ final kernel config: KSU + multi-manager + SUSFS 2.2.0 + FT8722"
           echo "✅ ReSukiSU signature table present"
 

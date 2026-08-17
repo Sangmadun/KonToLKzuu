@@ -86,6 +86,9 @@ runs:
           sed -i '/static apk_sign_key_t apk_sign_keys\[\] = {/a\    { EXPECTED_SIZE_CAMELLIA_COMPAT, EXPECTED_HASH_CAMELLIA_COMPAT }, /* Camellia compat Manager */' "$SIGN_C"
           grep -q 'EXPECTED_HASH_CAMELLIA_COMPAT' "$SIGN_H"
           grep -q 'EXPECTED_SIZE_CAMELLIA_COMPAT' "$SIGN_C"
+          grep -q "$CERT_HASH" "$SIGN_H" || { echo "ERROR: compatibility hash was not written to manager_sign.h"; exit 1; }
+          grep -q 'EXPECTED_HASH_CAMELLIA_COMPAT' "$SIGN_C" || { echo "ERROR: compatibility key was not written to apk_sign.c"; exit 1; }
+          echo "CERTIFICATE_PAIR_HASH=$CERT_HASH" >> "$GITHUB_ENV"
           echo "Paired compatibility certificate: size=$CERT_SIZE sha256=$CERT_HASH"
           rm -rf "$TMP_SIG"
         fi
