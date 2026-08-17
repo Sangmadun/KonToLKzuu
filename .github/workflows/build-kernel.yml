@@ -201,21 +201,26 @@ jobs:
         if: inputs.include_susfs == true
         uses: ./.github/actions/apply-susfs
 
-      - name: Apply ReSukiSU Manual Hooks (legacy 4.14)
+      - name: Configure ReSukiSU SUSFS Inline Hooks (legacy 4.14)
         if: inputs.manifest_name == 'camellia' && (inputs.ksu_fork == 'ReSuKISU' || inputs.ksu_fork == 'ReSukiSU')
         shell: bash
         run: |
           set -euo pipefail
           DC="kernel-source/arch/arm64/configs/camellia_defconfig"
-          python3 .github/scripts/apply_resukisu_manual_hooks.py kernel-source
-          grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC" || echo 'CONFIG_KSU_MANUAL_HOOK=y' >> "$DC"
+          # Inline mode is the ReSukiSU SUSFS hook path. Do not inject legacy
+          # manual call-sites or leave the manual selector enabled.
+          sed -i '/^CONFIG_KSU_MANUAL_HOOK=/d; /^# CONFIG_KSU_MANUAL_HOOK is not set$/d' "$DC"
+          echo '# CONFIG_KSU_MANUAL_HOOK is not set' >> "$DC"
+          sed -i '/^CONFIG_KSU_SUSFS=/d; /^# CONFIG_KSU_SUSFS is not set$/d' "$DC"
+          echo 'CONFIG_KSU_SUSFS=y' >> "$DC"
           sed -i 's/^CONFIG_KSU_TRACEPOINT_HOOK=y$/# CONFIG_KSU_TRACEPOINT_HOOK is not set/' "$DC"
           sed -i 's/^CONFIG_KPROBES=y$/# CONFIG_KPROBES is not set/' "$DC"
           sed -i 's/^CONFIG_HAVE_KPROBES=y$/# CONFIG_HAVE_KPROBES is not set/' "$DC"
           sed -i 's/^CONFIG_KPROBE_EVENTS=y$/# CONFIG_KPROBE_EVENTS is not set/' "$DC"
-          grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC"
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC"
+          grep -q '^CONFIG_KSU_SUSFS=y$' "$DC"
           ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' "$DC"
-          echo '✅ ReSukiSU manual hooks and legacy config enabled'
+          echo '✅ ReSukiSU SUSFS inline hooks selected'
 
       - name: Inject Selected Kernel Features
         uses: ./.github/actions/inject-features
@@ -231,7 +236,7 @@ jobs:
           enable_droidspace: ${{ inputs.include_droidspace }}
           enable_susfs: ${{ inputs.include_susfs }}
 
-      - name: Finalize ReSukiSU Manual Hook Config
+      - name: Finalize ReSukiSU Inline Hook Config
         if: inputs.manifest_name == 'camellia' && (inputs.ksu_fork == 'ReSuKISU' || inputs.ksu_fork == 'ReSukiSU')
         shell: bash
         run: |
@@ -239,18 +244,17 @@ jobs:
           DC="kernel-source/arch/arm64/configs/camellia_defconfig"
           sed -i '/^CONFIG_KSU_MANUAL_HOOK=/d' "$DC"
           sed -i '/^# CONFIG_KSU_MANUAL_HOOK is not set$/d' "$DC"
-          echo 'CONFIG_KSU_MANUAL_HOOK=y' >> "$DC"
+          echo '# CONFIG_KSU_MANUAL_HOOK is not set' >> "$DC"
+          sed -i '/^CONFIG_KSU_SUSFS=/d' "$DC"
+          echo 'CONFIG_KSU_SUSFS=y' >> "$DC"
           sed -i 's/^CONFIG_KSU_TRACEPOINT_HOOK=y$/# CONFIG_KSU_TRACEPOINT_HOOK is not set/' "$DC"
           sed -i 's/^CONFIG_KPROBES=y$/# CONFIG_KPROBES is not set/' "$DC"
           sed -i 's/^CONFIG_HAVE_KPROBES=y$/# CONFIG_HAVE_KPROBES is not set/' "$DC"
           sed -i 's/^CONFIG_KPROBE_EVENTS=y$/# CONFIG_KPROBE_EVENTS is not set/' "$DC"
-          for k in CONFIG_KSU_MANUAL_HOOK_AUTO_SETUID_HOOK CONFIG_KSU_MANUAL_HOOK_AUTO_INITRC_HOOK CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK; do
-            sed -i "/^$k=/d; /^# $k is not set$/d" "$DC"
-            echo "# $k is not set" >> "$DC"
-          done
-          grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC"
+          grep -q '^# CONFIG_KSU_MANUAL_HOOK is not set$' "$DC"
+          grep -q '^CONFIG_KSU_SUSFS=y$' "$DC"
           ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' "$DC"
-          echo '✅ final manual-hook config enforced after all feature injectors'
+          echo '✅ final SUSFS inline-hook config enforced after all feature injectors'
 
       - name: Update Progress -> Compiling Kernel
         if: always()
@@ -319,24 +323,15 @@ jobs:
           for c in CONFIG_KSU CONFIG_KSU_MULTI_MANAGER_SUPPORT CONFIG_KSU_SUSFS CONFIG_TOUCHSCREEN_FTS; do
             grep -qE "^${c}=y$" "$DC" || { echo "::error::$c is not enabled in final .config"; exit 1; }
           done
-          grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC" || { echo "::error::KSU manual hook config is not enabled"; exit 1; }
+          grep -q '^CONFIG_KSU_SUSFS=y$' "$DC" || { echo "::error::SUSFS inline hook config is not enabled"; exit 1; }
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC" || { echo "::error::manual hook remains enabled"; exit 1; }
           # Official Manager 35002 requires the matching ABI embedded in the image.
           python3 "$GITHUB_WORKSPACE/.github/scripts/check_abi_version.py" "$SRC/out/vmlinux" "$IMG"
           ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' "$DC" || { echo "::error::tracepoint hook must be disabled"; exit 1; }
-          declare -A HOOKS=(
-            [kernel/sys.c]=ksu_handle_setresuid
-            [fs/stat.c]=ksu_handle_stat
-            [fs/exec.c]=ksu_handle_execveat
-            [fs/open.c]=ksu_handle_faccessat
-            [fs/read_write.c]=ksu_handle_sys_read
-            [kernel/reboot.c]=ksu_handle_sys_reboot
-            [drivers/input/input.c]=ksu_handle_input_handle_event
-          )
-          for f in "${!HOOKS[@]}"; do
-            grep -q 'CONFIG_KSU_MANUAL_HOOK' "$SRC/$f" || { echo "::error::manual hook guard missing in $f"; exit 1; }
-            grep -q "${HOOKS[$f]}" "$SRC/$f" || { echo "::error::${HOOKS[$f]} call-site missing in $f"; exit 1; }
-          done
-          echo "✅ all required ReSukiSU manual hook call-sites present"
+          test -f "$SRC/drivers/kernelsu/tools/inline_hook_check.mk" || { echo "::error::inline hook checker missing"; exit 1; }
+          grep -q 'using SuSFS Inline hook' "$SRC/drivers/kernelsu/Kbuild" || { echo "::error::Kbuild inline path missing"; exit 1; }
+          grep -q 'include.*inline_hook_check.mk' "$SRC/drivers/kernelsu/Kbuild" || { echo "::error::inline hook checker not selected"; exit 1; }
+          echo "✅ ReSukiSU SUSFS inline-hook path present and selected"
           grep -qE '^CONFIG_TOUCHSCREEN_FTS_DIRECTORY="FT8722"$' "$DC" || { echo "::error::FT8722 directory missing"; exit 1; }
           grep -qE '^CONFIG_KSU_SUSFS_SUS_MAP=n$|^# CONFIG_KSU_SUSFS_SUS_MAP is not set$' "$DC" || { echo "::error::unexpected SUS_MAP state"; exit 1; }
           grep -q 'SUSFS_VERSION.*2\.2\.0' "$SRC/include/linux/susfs.h" || { echo "::error::SUSFS 2.2.0 header not found"; exit 1; }
