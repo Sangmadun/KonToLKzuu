@@ -231,6 +231,23 @@ jobs:
           enable_droidspace: ${{ inputs.include_droidspace }}
           enable_susfs: ${{ inputs.include_susfs }}
 
+      - name: Finalize ReSukiSU Manual Hook Config
+        if: inputs.manifest_name == 'camellia' && (inputs.ksu_fork == 'ReSuKISU' || inputs.ksu_fork == 'ReSukiSU')
+        shell: bash
+        run: |
+          set -euo pipefail
+          DC="kernel-source/arch/arm64/configs/camellia_defconfig"
+          sed -i '/^CONFIG_KSU_MANUAL_HOOK=/d' "$DC"
+          sed -i '/^# CONFIG_KSU_MANUAL_HOOK is not set$/d' "$DC"
+          echo 'CONFIG_KSU_MANUAL_HOOK=y' >> "$DC"
+          sed -i 's/^CONFIG_KSU_TRACEPOINT_HOOK=y$/# CONFIG_KSU_TRACEPOINT_HOOK is not set/' "$DC"
+          sed -i 's/^CONFIG_KPROBES=y$/# CONFIG_KPROBES is not set/' "$DC"
+          sed -i 's/^CONFIG_HAVE_KPROBES=y$/# CONFIG_HAVE_KPROBES is not set/' "$DC"
+          sed -i 's/^CONFIG_KPROBE_EVENTS=y$/# CONFIG_KPROBE_EVENTS is not set/' "$DC"
+          grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC"
+          ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' "$DC"
+          echo '✅ final manual-hook config enforced after all feature injectors'
+
       - name: Update Progress -> Compiling Kernel
         if: always()
         env:
