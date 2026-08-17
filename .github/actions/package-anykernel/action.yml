@@ -59,6 +59,27 @@ runs:
           exit 1
         fi
 
+        # -----------------------------------------------------------------
+        # ReSukiSU userspace bootstrap
+        #
+        # A legacy 4.14 kernel has no pre-existing su/ksud installation.
+        # The official Manager normally installs its embedded libksud.so via
+        # a root shell, which creates a bootstrap deadlock on a fresh boot.
+        # Carry the exact official arm64 userspace binary in the ZIP and let
+        # the recovery-side installer seed /data/adb before first boot.
+        # This is not an APK replacement and does not create a fake su.
+        # -----------------------------------------------------------------
+        OFFICIAL_APK=$(find ../output_apk -maxdepth 1 -type f -name '*.apk' | head -n 1 || true)
+        [ -n "$OFFICIAL_APK" ] || { echo "❌ Official Manager APK missing for ksud bootstrap"; exit 1; }
+        mkdir -p resukisu-bootstrap
+        unzip -p "$OFFICIAL_APK" lib/arm64-v8a/libksud.so > resukisu-bootstrap/ksud
+        unzip -p "$OFFICIAL_APK" lib/arm64-v8a/libadbroot.so > resukisu-bootstrap/libadbroot.so
+        test -s resukisu-bootstrap/ksud || { echo "❌ libksud.so missing from official APK"; exit 1; }
+        test -s resukisu-bootstrap/libadbroot.so || { echo "❌ libadbroot.so missing from official APK"; exit 1; }
+        chmod 0755 resukisu-bootstrap/ksud resukisu-bootstrap/libadbroot.so
+        file resukisu-bootstrap/ksud resukisu-bootstrap/libadbroot.so
+        sha256sum resukisu-bootstrap/ksud resukisu-bootstrap/libadbroot.so
+
         [ -f "${OUT_DIR}/dtb" ] && cp "${OUT_DIR}/dtb" .
         [ -f "${OUT_DIR}/dtbo.img" ] && cp "${OUT_DIR}/dtbo.img" .
 
@@ -140,6 +161,22 @@ runs:
         split_boot;
         flash_boot;
         flash_dtbo;
+
+        # Seed official ReSukiSU userspace while recovery still has root.
+        # ksud install extracts its embedded assets and creates the runtime
+        # layout/symlinks used by the kernel init hook.
+        install_resukisu_userspace() {
+          local adb=/data/adb;
+          mkdir -p "$adb/ksu/lib" "$adb/ksu/bin" "$adb/modules" || abort "Cannot create /data/adb layout";
+          unzip -p "$ZIPFILE" resukisu-bootstrap/ksud > "$adb/ksud" || abort "Cannot extract official ksud";
+          unzip -p "$ZIPFILE" resukisu-bootstrap/libadbroot.so > "$adb/ksu/lib/libadbroot.so" || abort "Cannot extract libadbroot";
+          chmod 0755 "$adb/ksud" "$adb/ksu/lib/libadbroot.so";
+          "$adb/ksud" install --libadbroot "$adb/ksu/lib/libadbroot.so" || abort "ksud install failed";
+          [ -x "$adb/ksud" ] || abort "ksud missing after install";
+          [ -x "$adb/ksu/bin/ksud" ] || abort "ksud symlink missing after install";
+          ui_print " [✓] ReSukiSU userspace bootstrap installed";
+        }
+        install_resukisu_userspace;
         EOF_AK3
 
         # -----------------------------------------------------------------

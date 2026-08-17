@@ -360,6 +360,28 @@ jobs:
           include_bbg: ${{ inputs.include_bbg }}
           include_bbr: ${{ inputs.include_bbr }}
 
+      - name: Verify ReSukiSU userspace bootstrap payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP=$(find . -maxdepth 1 -type f -name '*.zip' | head -n 1)
+          [ -n "$ZIP" ] || { echo "::error::kernel ZIP missing"; exit 1; }
+          unzip -t "$ZIP" >/dev/null
+          unzip -l "$ZIP" | grep -q 'resukisu-bootstrap/ksud' || {
+            echo "::error::official ksud bootstrap missing from ZIP"; exit 1;
+          }
+          unzip -l "$ZIP" | grep -q 'resukisu-bootstrap/libadbroot.so' || {
+            echo "::error::libadbroot bootstrap missing from ZIP"; exit 1;
+          }
+          mkdir -p /tmp/resukisu-bootstrap-audit
+          unzip -p "$ZIP" resukisu-bootstrap/ksud > /tmp/resukisu-bootstrap-audit/ksud
+          unzip -p "$ZIP" resukisu-bootstrap/libadbroot.so > /tmp/resukisu-bootstrap-audit/libadbroot.so
+          test "$(stat -c '%s' /tmp/resukisu-bootstrap-audit/ksud)" -gt 1000000
+          test "$(stat -c '%s' /tmp/resukisu-bootstrap-audit/libadbroot.so)" -gt 1000
+          file /tmp/resukisu-bootstrap-audit/ksud /tmp/resukisu-bootstrap-audit/libadbroot.so
+          sha256sum /tmp/resukisu-bootstrap-audit/ksud /tmp/resukisu-bootstrap-audit/libadbroot.so
+          echo "✅ ReSukiSU userspace bootstrap payload verified"
+
       - name: Debug Workspace Files
         run: |
           echo "📂 File di Root Workspace:"
