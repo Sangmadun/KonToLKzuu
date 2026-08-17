@@ -91,6 +91,16 @@ runs:
         grep -q '^config KSU_MANUAL_HOOK$' "$KSU_KCONFIG"
         grep -q '^config KSU_SUSFS$' "$KSU_KCONFIG"
 
+        # With both SUSFS and legacy manual hooks enabled, the runtime must use
+        # the manual-hook state symbols expected by fs/read_write.c and input.c.
+        # The upstream branch order otherwise selects the SUSFS-only symbols
+        # (ksu_is_init_rc_hook_enabled / ksu_is_input_hook_enabled).
+        KSUD_RUNTIME="drivers/kernelsu/runtime/ksud_integration.c"
+        if [ -f "$KSUD_RUNTIME" ]; then
+          sed -i 's/^#elif defined(CONFIG_KSU_SUSFS)$/#elif defined(CONFIG_KSU_SUSFS) \&\& !defined(CONFIG_KSU_MANUAL_HOOK)/' "$KSUD_RUNTIME"
+          grep -q '#elif defined(CONFIG_KSU_SUSFS) && !defined(CONFIG_KSU_MANUAL_HOOK)' "$KSUD_RUNTIME"
+        fi
+
         # Injeksi ksu_cred secara presisi
         echo "🔧 Injecting extern ksu_cred declaration safely into KernelSU C files..."
         find drivers/kernelsu/ -type f -name "*.c" | while read -r file; do
