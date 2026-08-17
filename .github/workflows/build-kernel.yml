@@ -110,10 +110,23 @@ jobs:
         run: python3 .github/scripts/telegram_notify.py start
 
       - name: Setup Build Dependencies
+        shell: bash
         run: |
-          sudo apt purge -y man-db /var/lib/man-db/auto-update || true
-          sudo apt update -qq
-          sudo apt install -y build-essential bc libncurses5-dev libssl-dev bison flex libelf-dev zip unzip git ccache curl aria2 jq
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          export NEEDRESTART_MODE=a
+          sudo -n apt purge -y -o DPkg::Lock::Timeout=60 man-db /var/lib/man-db/auto-update || true
+          timeout 180s sudo -n apt-get update -qq
+          timeout 180s sudo -n apt-get install -y -o DPkg::Lock::Timeout=60 \
+            build-essential bc libncurses5-dev libssl-dev bison flex libelf-dev \
+            zip unzip git ccache curl aria2 jq
+          echo '✅ Build dependencies installed'
+          command -v timeout >/dev/null
+          command -v make >/dev/null
+          command -v unzip >/dev/null
+          command -v jq >/dev/null
+          echo '✅ Dependency command gate passed'
+
 
       - name: Download Toolchains
         uses: ./.github/actions/download-toolchain
