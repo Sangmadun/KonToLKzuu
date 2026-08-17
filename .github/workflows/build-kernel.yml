@@ -320,6 +320,9 @@ jobs:
             grep -qE "^${c}=y$" "$DC" || { echo "::error::$c is not enabled in final .config"; exit 1; }
           done
           grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC" || { echo "::error::KSU manual hook config is not enabled"; exit 1; }
+          # Official Manager 35002 requires the matching kernel ABI; reject legacy 11872.
+          grep -R -nE 'KSU_VERSION[[:space:]]*[:=][[:space:]]*35002|DKERNEL_SU_VERSION=35002' "$SRC/drivers/kernelsu" >/dev/null || { echo "::error::KSU ABI 35002 is not present in compiled source"; exit 1; }
+          ! grep -R -nE 'KERNEL_SU_VERSION[[:space:]]*(=| )+11872|-DKERNEL_SU_VERSION=11872' "$SRC/drivers/kernelsu" || { echo "::error::legacy KSU ABI 11872 remains"; exit 1; }
           ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' "$DC" || { echo "::error::tracepoint hook must be disabled"; exit 1; }
           declare -A HOOKS=(
             [kernel/sys.c]=ksu_handle_setresuid

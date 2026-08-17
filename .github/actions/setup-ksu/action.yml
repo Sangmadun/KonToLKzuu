@@ -73,11 +73,23 @@ runs:
           cp -rf "$ufolder"/* include/uapi/ 2>/dev/null || true
         done
 
+        # Pair the built-in kernel ABI with the official ReSukiSU Manager 35002.
+        # Never inject the archived legacy 11872 ABI into a modern manager build.
+        KSU_ABI_VERSION=35002
         if [ -f "drivers/kernelsu/Kbuild" ]; then
-          sed -i '1iccflags-y += -I$(srctree)/drivers/kernelsu -I$(srctree)/drivers/kernelsu/include -DKERNEL_SU_VERSION=11872' drivers/kernelsu/Kbuild
+          sed -i '/-DKERNEL_SU_VERSION=/d' drivers/kernelsu/Kbuild
+          sed -i "1iccflags-y += -I\$(srctree)/drivers/kernelsu -I\$(srctree)/drivers/kernelsu/include -DKERNEL_SU_VERSION=$KSU_ABI_VERSION" drivers/kernelsu/Kbuild
+          sed -i -E "s/^[[:space:]]*KSU_VERSION[[:space:]]*:=.*/KSU_VERSION := $KSU_ABI_VERSION/" drivers/kernelsu/Kbuild
+          grep -q "KSU_VERSION := $KSU_ABI_VERSION" drivers/kernelsu/Kbuild
         fi
         if [ -f "drivers/kernelsu/Makefile" ]; then
-          sed -i '1iccflags-y += -I$(srctree)/drivers/kernelsu -I$(srctree)/drivers/kernelsu/include -DKERNEL_SU_VERSION=11872' drivers/kernelsu/Makefile
+          sed -i '/-DKERNEL_SU_VERSION=/d' drivers/kernelsu/Makefile
+          sed -i "1iccflags-y += -I\$(srctree)/drivers/kernelsu -I\$(srctree)/drivers/kernelsu/include -DKERNEL_SU_VERSION=$KSU_ABI_VERSION" drivers/kernelsu/Makefile
+          sed -i -E "s/^[[:space:]]*KSU_VERSION[[:space:]]*:=.*/KSU_VERSION := $KSU_ABI_VERSION/" drivers/kernelsu/Makefile
+        fi
+        if grep -R -nE 'KERNEL_SU_VERSION[[:space:]]*(=| )+11872|-DKERNEL_SU_VERSION=11872' drivers/kernelsu; then
+          echo '::error::legacy KSU ABI 11872 remains'
+          exit 1
         fi
 
         # ReSukiSU upstream places the hook selector and SUSFS in one Kconfig
@@ -154,7 +166,7 @@ runs:
         DISPATCH_FILE="drivers/kernelsu/supercall/dispatch.c"
         if [ -f "$DISPATCH_FILE" ]; then
           echo "🔧 Injecting CMD_SUSFS macros only (no weak stubs; core provides symbols)..."
-          sed -i '1i#include <linux/types.h>\n#include <linux/susfs_def.h>\n#ifndef KERNEL_SU_VERSION\n#define KERNEL_SU_VERSION 11872\n#endif\nextern bool ksu_late_loaded;\n#ifndef CMD_SUSFS_ADD_SUS_PATH\n#define CMD_SUSFS_ADD_SUS_PATH 0x55555\n#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55556\n#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x55557\n#define CMD_SUSFS_ADD_SUS_KSTAT 0x55558\n#define CMD_SUSFS_UPDATE_SUS_KSTAT 0x55559\n#define CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY 0x5555a\n#define CMD_SUSFS_SET_UNAME 0x5555b\n#define CMD_SUSFS_ENABLE_LOG 0x5555c\n#define CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG 0x5555d\n#define CMD_SUSFS_ADD_OPEN_REDIRECT 0x5555e\n#define CMD_SUSFS_ADD_SUS_MAP 0x5555f\n#define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x55560\n#define CMD_SUSFS_SHOW_ENABLED_FEATURES 0x55561\n#define CMD_SUSFS_SHOW_VARIANT 0x55562\n#define CMD_SUSFS_SHOW_VERSION 0x55563\n#endif' "$DISPATCH_FILE"
+          sed -i '1i#include <linux/types.h>\n#include <linux/susfs_def.h>\n#ifndef KERNEL_SU_VERSION\n#define KERNEL_SU_VERSION 35002\n#endif\nextern bool ksu_late_loaded;\n#ifndef CMD_SUSFS_ADD_SUS_PATH\n#define CMD_SUSFS_ADD_SUS_PATH 0x55555\n#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55556\n#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x55557\n#define CMD_SUSFS_ADD_SUS_KSTAT 0x55558\n#define CMD_SUSFS_UPDATE_SUS_KSTAT 0x55559\n#define CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY 0x5555a\n#define CMD_SUSFS_SET_UNAME 0x5555b\n#define CMD_SUSFS_ENABLE_LOG 0x5555c\n#define CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG 0x5555d\n#define CMD_SUSFS_ADD_OPEN_REDIRECT 0x5555e\n#define CMD_SUSFS_ADD_SUS_MAP 0x5555f\n#define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x55560\n#define CMD_SUSFS_SHOW_ENABLED_FEATURES 0x55561\n#define CMD_SUSFS_SHOW_VARIANT 0x55562\n#define CMD_SUSFS_SHOW_VERSION 0x55563\n#endif' "$DISPATCH_FILE"
         fi
 
         # Generasi susfs_def.h global
