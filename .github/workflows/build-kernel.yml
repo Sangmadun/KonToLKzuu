@@ -72,13 +72,6 @@ jobs:
       KERNEL_DEFCONFIG: ${{ inputs.manifest_name == 'cristidclxvi' && 'camellian_id_defconfig' || 'camellia_defconfig' }}
 
     steps:
-      - name: Download Manager Compatibility APK for Kernel Signature Pairing
-        if: inputs.build_target == 'both'
-        uses: actions/download-artifact@v4
-        with:
-          name: manager-apk-artifact
-          path: output_apk
-
       - name: Maximize Build Space
         uses: easimon/maximize-build-space@master
         with:
@@ -93,6 +86,13 @@ jobs:
 
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Download Manager Compatibility APK for Kernel Signature Pairing
+        if: inputs.build_target == 'both'
+        uses: actions/download-artifact@v4
+        with:
+          name: manager-apk-artifact
+          path: output_apk
 
       - name: Select Defconfig per Manifest
         run: |
