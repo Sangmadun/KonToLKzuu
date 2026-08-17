@@ -87,6 +87,13 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Require exact Manager pair for ReSukiSU kernel builds
+        if: inputs.build_target == 'kernel_only' && (inputs.ksu_fork == 'ReSuKISU' || inputs.ksu_fork == 'ReSukiSU')
+        shell: bash
+        run: |
+          echo "::error::ReSukiSU Camellia builds require build_target=both so the exact official Manager artifact is paired before compilation"
+          exit 1
+
       - name: Download Official ReSukiSU APK for Kernel Signature Pairing
         if: inputs.build_target == 'both'
         uses: actions/download-artifact@v4
@@ -227,7 +234,6 @@ jobs:
           echo 'CONFIG_KSU_SUSFS=y' >> "$DC"
           sed -i 's/^CONFIG_KSU_TRACEPOINT_HOOK=y$/# CONFIG_KSU_TRACEPOINT_HOOK is not set/' "$DC"
           sed -i 's/^CONFIG_KPROBES=y$/# CONFIG_KPROBES is not set/' "$DC"
-          sed -i 's/^CONFIG_HAVE_KPROBES=y$/# CONFIG_HAVE_KPROBES is not set/' "$DC"
           sed -i 's/^CONFIG_KPROBE_EVENTS=y$/# CONFIG_KPROBE_EVENTS is not set/' "$DC"
           ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC"
           grep -q '^CONFIG_KSU_SUSFS=y$' "$DC"
@@ -261,7 +267,6 @@ jobs:
           echo 'CONFIG_KSU_SUSFS=y' >> "$DC"
           sed -i 's/^CONFIG_KSU_TRACEPOINT_HOOK=y$/# CONFIG_KSU_TRACEPOINT_HOOK is not set/' "$DC"
           sed -i 's/^CONFIG_KPROBES=y$/# CONFIG_KPROBES is not set/' "$DC"
-          sed -i 's/^CONFIG_HAVE_KPROBES=y$/# CONFIG_HAVE_KPROBES is not set/' "$DC"
           sed -i 's/^CONFIG_KPROBE_EVENTS=y$/# CONFIG_KPROBE_EVENTS is not set/' "$DC"
           grep -q '^# CONFIG_KSU_MANUAL_HOOK is not set$' "$DC"
           grep -q '^CONFIG_KSU_SUSFS=y$' "$DC"
@@ -340,6 +345,10 @@ jobs:
           # Official Manager 35002 requires the matching ABI embedded in the image.
           python3 "$GITHUB_WORKSPACE/.github/scripts/check_abi_version.py" "$SRC/out/vmlinux" "$IMG"
           ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' "$DC" || { echo "::error::tracepoint hook must be disabled"; exit 1; }
+          ! grep -q '^CONFIG_KPROBES=y$' "$DC" || { echo "::error::Kprobes runtime must be disabled for pure inline mode"; exit 1; }
+          grep -q '^CONFIG_HAVE_KPROBES=y$' "$DC" || { echo "::error::ARM64 Kprobes capability was incorrectly removed"; exit 1; }
+          grep -q '^choice$' "$SRC/drivers/kernelsu/Kconfig" || { echo "::error::upstream hook choice was rewritten"; exit 1; }
+          grep -q '^#elif defined(CONFIG_KSU_SUSFS)$' "$SRC/drivers/kernelsu/runtime/ksud_integration.c" || { echo "::error::pure SUSFS runtime branch missing"; exit 1; }
           test -f "$SRC/drivers/kernelsu/tools/inline_hook_check.mk" || { echo "::error::inline hook checker missing"; exit 1; }
           grep -q 'using SuSFS Inline hook' "$SRC/drivers/kernelsu/Kbuild" || { echo "::error::Kbuild inline path missing"; exit 1; }
           grep -q 'include.*inline_hook_check.mk' "$SRC/drivers/kernelsu/Kbuild" || { echo "::error::inline hook checker not selected"; exit 1; }
@@ -361,6 +370,12 @@ jobs:
           ! grep -q 'ksu_handle_newfstat_ret' "$SRC/fs/stat.c" || { echo "::error::manual-only newfstat hook leaked into inline build"; exit 1; }
           echo "✅ ReSukiSU SUSFS inline-hook path and all call-sites present"
           grep -qE '^CONFIG_TOUCHSCREEN_FTS_DIRECTORY="FT8722"$' "$DC" || { echo "::error::FT8722 directory missing"; exit 1; }
+          for c in CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT CONFIG_KSU_SUSFS_SUS_KSTAT CONFIG_KSU_SUSFS_SPOOF_UNAME CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG CONFIG_KSU_SUSFS_OPEN_REDIRECT; do
+            grep -q "^$c=y$" "$DC" || { echo "::error::$c missing from final config"; exit 1; }
+          done
+          for stale in CONFIG_KSU_SUSFS_SUS_OVERLAYFS CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT CONFIG_KSU_SUSFS_TRY_UMOUNT CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT; do
+            ! grep -q "^$stale=" "$DC" || { echo "::error::orphan SUSFS config leaked: $stale"; exit 1; }
+          done
           grep -qE '^CONFIG_KSU_SUSFS_SUS_MAP=n$|^# CONFIG_KSU_SUSFS_SUS_MAP is not set$' "$DC" || { echo "::error::unexpected SUS_MAP state"; exit 1; }
           grep -q 'SUSFS_VERSION.*2\.2\.0' "$SRC/include/linux/susfs.h" || { echo "::error::SUSFS 2.2.0 header not found"; exit 1; }
           grep -q 'EXPECTED_HASH_RESUKISU' "$SRC/drivers/kernelsu/manager/manager_sign.h" || { echo "::error::ReSukiSU signature table missing"; exit 1; }

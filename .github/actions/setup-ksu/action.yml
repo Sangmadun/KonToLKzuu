@@ -51,15 +51,22 @@ runs:
         mkdir -p drivers/kernelsu
 
         if [ -d "KernelSU_temp/kernel" ]; then
-          echo "🚚 Extracting KSU source from KernelSU_temp/kernel to drivers/kernelsu..."
-          cp -r KernelSU_temp/kernel/* drivers/kernelsu/
+          echo "🚚 Linking KSU source from KernelSU_temp/kernel to drivers/kernelsu..."
+          rm -rf drivers/kernelsu
+          ln -s ../KernelSU_temp/kernel drivers/kernelsu
         elif [ -f "KernelSU_temp/Makefile" ]; then
-          echo "🚚 Extracting KSU source directly from KernelSU_temp..."
-          cp -r KernelSU_temp/* drivers/kernelsu/
+          echo "🚚 Linking KSU source from KernelSU_temp to drivers/kernelsu..."
+          rm -rf drivers/kernelsu
+          ln -s ../KernelSU_temp drivers/kernelsu
         else
           echo "❌ ERROR: No valid Makefile found in cloned KSU repository!"
           exit 1
         fi
+        test -L drivers/kernelsu
+        test -e drivers/kernelsu/../.git || { echo "::error::ReSukiSU Git context missing"; exit 1; }
+        KSU_PINNED_COMMIT="$(git -C KernelSU_temp rev-parse HEAD)"
+        test -n "$KSU_PINNED_COMMIT"
+        echo "ReSukiSU source commit: $KSU_PINNED_COMMIT"
 
         # Sinkronisasi folder UAPI & injeksi include path
         echo "🔧 Fixing KSU UAPI header directories & includes..."
@@ -94,26 +101,19 @@ runs:
           exit 1
         fi
 
-        # ReSukiSU upstream places the hook selector and SUSFS in one Kconfig
-        # choice. Legacy 4.14 needs both manual syscall hooks and SUSFS, so make
-        # these independent bools while retaining the original dependencies.
+        # Preserve ReSukiSU's upstream mutually-exclusive hooking choice.
+        # This target is pure SUSFS Inline: CONFIG_KSU_SUSFS is selected later,
+        # while Manual and Tracepoint stay disabled. Never rewrite the Kconfig
+        # into the old dual-hook layout or alter its runtime branch ordering.
         KSU_KCONFIG="drivers/kernelsu/Kconfig"
-        # The ReSukiSU Kconfig has one hook/SUSFS choice block. Remove only its
-        # delimiters so both legacy manual hooks and SUSFS can be enabled.
         grep -q 'prompt "KernelSU Hooking Method"' "$KSU_KCONFIG"
-        sed -i '/^choice$/d; /^endchoice$/d; /^\s*prompt "KernelSU Hooking Method"$/d; /^\s*default KSU_TRACEPOINT_HOOK$/d' "$KSU_KCONFIG"
+        grep -q '^choice$' "$KSU_KCONFIG"
+        grep -q '^endchoice$' "$KSU_KCONFIG"
         grep -q '^config KSU_MANUAL_HOOK$' "$KSU_KCONFIG"
         grep -q '^config KSU_SUSFS$' "$KSU_KCONFIG"
-
-        # With both SUSFS and legacy manual hooks enabled, the runtime must use
-        # the manual-hook state symbols expected by fs/read_write.c and input.c.
-        # The upstream branch order otherwise selects the SUSFS-only symbols
-        # (ksu_is_init_rc_hook_enabled / ksu_is_input_hook_enabled).
         KSUD_RUNTIME="drivers/kernelsu/runtime/ksud_integration.c"
-        if [ -f "$KSUD_RUNTIME" ]; then
-          sed -i 's/^#elif defined(CONFIG_KSU_SUSFS)$/#elif defined(CONFIG_KSU_SUSFS) \&\& !defined(CONFIG_KSU_MANUAL_HOOK)/' "$KSUD_RUNTIME"
-          grep -q '#elif defined(CONFIG_KSU_SUSFS) && !defined(CONFIG_KSU_MANUAL_HOOK)' "$KSUD_RUNTIME"
-        fi
+        grep -q '^#elif defined(CONFIG_KSU_SUSFS)$' "$KSUD_RUNTIME"
+        ! grep -q 'CONFIG_KSU_SUSFS) && !defined(CONFIG_KSU_MANUAL_HOOK)' "$KSUD_RUNTIME"
 
         # Embed an ASCII ABI marker in the built-in KSU core. The dispatch object
         # is not guaranteed to be linked on every legacy config; core/init.c is.
@@ -256,7 +256,10 @@ runs:
 
         cp -f include/linux/susfs_def.h drivers/kernelsu/include/linux/susfs_def.h 2>/dev/null || true
 
-        rm -rf KernelSU_temp
+        # Keep KernelSU_temp: drivers/kernelsu is a symlink into this clone so
+        # upstream Git/version and fail-closed Kbuild checks remain valid.
+        test -e KernelSU_temp/.git
+        test -f drivers/kernelsu/Kbuild
 
         sed -i 's|source "KernelSU/Kconfig"|source "drivers/kernelsu/Kconfig"|g' drivers/Kconfig
         sed -i 's|source "drivers/KernelSU/Kconfig"|source "drivers/kernelsu/Kconfig"|g' drivers/Kconfig
@@ -269,8 +272,13 @@ runs:
           echo 'obj-y += kernelsu/' >> drivers/Makefile
         fi
 
-        echo "🔧 Bypassing strict checks..."
-        find -L drivers/kernelsu -type f \( -name "Kbuild" -o -name "*.mk" -o -name "Makefile" \) 2>/dev/null -exec sed -i 's/\$(error/\$(info/g' {} + || true
+        echo "🔒 Preserving upstream fail-closed Kbuild validators..."
+        ! grep -R -nF '$(info You should integrate' drivers/kernelsu/tools drivers/kernelsu/Kbuild 2>/dev/null || {
+          echo "::error::KernelSU validators were weakened"; exit 1;
+        }
+        grep -qF '$(error You should integrate' drivers/kernelsu/tools/inline_hook_check.mk || {
+          echo "::error::inline hook validator is not fail-closed"; exit 1;
+        }
 
         echo "✅ Verification of drivers/kernelsu directory:"
         ls -la drivers/kernelsu/

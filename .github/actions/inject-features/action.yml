@@ -201,11 +201,11 @@ runs:
           set_config "CONFIG_KSU_SUSFS_SUS_PATH" "y"
           set_config "CONFIG_KSU_SUSFS_SUS_MOUNT" "y"
           set_config "CONFIG_KSU_SUSFS_SUS_KSTAT" "y"
-          set_config "CONFIG_KSU_SUSFS_SUS_OVERLAYFS" "y"
-          set_config "CONFIG_KSU_SUSFS_TRY_UMOUNT" "y"
-          set_config "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT" "y"
-          set_config "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT" "y"
-          set_config "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT" "y"
+          set_config "CONFIG_KSU_SUSFS_SPOOF_UNAME" "y"
+          set_config "CONFIG_KSU_SUSFS_ENABLE_LOG" "y"
+          set_config "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS" "y"
+          set_config "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG" "y"
+          set_config "CONFIG_KSU_SUSFS_OPEN_REDIRECT" "y"
           # SUS_MAP disabled: its VFS hook lives in fs/proc/task_mmu.c show_smap(),
           # whose structure differs too much on camellia 4.14 to merge safely.
           # task_mmu.c is kept pristine; disabling SUS_MAP avoids a dangling hook.
