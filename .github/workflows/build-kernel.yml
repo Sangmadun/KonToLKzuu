@@ -87,7 +87,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Download Manager Compatibility APK for Kernel Signature Pairing
+      - name: Download Official ReSukiSU APK for Kernel Signature Pairing
         if: inputs.build_target == 'both'
         uses: actions/download-artifact@v4
         with:
@@ -201,6 +201,22 @@ jobs:
         if: inputs.include_susfs == true
         uses: ./.github/actions/apply-susfs
 
+      - name: Apply ReSukiSU Manual Hooks (legacy 4.14)
+        if: inputs.manifest_name == 'camellia' && (inputs.ksu_fork == 'ReSuKISU' || inputs.ksu_fork == 'ReSukiSU')
+        shell: bash
+        run: |
+          set -euo pipefail
+          DC="kernel-source/arch/arm64/configs/camellia_defconfig"
+          python3 .github/scripts/apply_resukisu_manual_hooks.py kernel-source
+          grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC" || echo 'CONFIG_KSU_MANUAL_HOOK=y' >> "$DC"
+          sed -i 's/^CONFIG_KSU_TRACEPOINT_HOOK=y$/# CONFIG_KSU_TRACEPOINT_HOOK is not set/' "$DC"
+          sed -i 's/^CONFIG_KPROBES=y$/# CONFIG_KPROBES is not set/' "$DC"
+          sed -i 's/^CONFIG_HAVE_KPROBES=y$/# CONFIG_HAVE_KPROBES is not set/' "$DC"
+          sed -i 's/^CONFIG_KPROBE_EVENTS=y$/# CONFIG_KPROBE_EVENTS is not set/' "$DC"
+          grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC"
+          ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' "$DC"
+          echo '✅ ReSukiSU manual hooks and legacy config enabled'
+
       - name: Inject Selected Kernel Features
         uses: ./.github/actions/inject-features
         with:
@@ -229,12 +245,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APK="$GITHUB_WORKSPACE/output_apk/ReSuKISU_Manager_4.14-compat-arm64-signed.apk"
+          APK="$GITHUB_WORKSPACE/output_apk/ReSuKISU_v4.1.0_35002-arm64-v8a-official.apk"
           SRC="$GITHUB_WORKSPACE/kernel-source"
           SIGN_H="$SRC/drivers/kernelsu/manager/manager_sign.h"
           SIGN_C="$SRC/drivers/kernelsu/manager/apk_sign.c"
           [ -f "$APK" ] && [ -f "$SIGN_H" ] && [ -f "$SIGN_C" ]
           read -r CERT_SIZE CERT_HASH < <(python3 "$GITHUB_WORKSPACE/.github/scripts/extract_apk_v2_cert.py" "$APK")
+          test "$CERT_SIZE" = 887
+          test "$CERT_HASH" = d3469712b6214462764a1d8d3e5cbe1d6819a0b629791b9f4101867821f1df64
           python3 - "$SIGN_H" "$CERT_SIZE" "$CERT_HASH" <<'PY'
           from pathlib import Path
           import sys
@@ -280,20 +298,34 @@ jobs:
           for c in CONFIG_KSU CONFIG_KSU_MULTI_MANAGER_SUPPORT CONFIG_KSU_SUSFS CONFIG_TOUCHSCREEN_FTS; do
             grep -qE "^${c}=y$" "$DC" || { echo "::error::$c is not enabled in final .config"; exit 1; }
           done
+          grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC" || { echo "::error::KSU manual hook config is not enabled"; exit 1; }
+          ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' "$DC" || { echo "::error::tracepoint hook must be disabled"; exit 1; }
+          declare -A HOOKS=(
+            [kernel/sys.c]=ksu_handle_setresuid
+            [fs/stat.c]=ksu_handle_stat
+            [fs/exec.c]=ksu_handle_execveat
+            [fs/open.c]=ksu_handle_faccessat
+            [fs/read_write.c]=ksu_handle_sys_read
+            [kernel/reboot.c]=ksu_handle_sys_reboot
+            [drivers/input/input.c]=ksu_handle_input_handle_event
+          )
+          for f in "${!HOOKS[@]}"; do
+            grep -q 'CONFIG_KSU_MANUAL_HOOK' "$SRC/$f" || { echo "::error::manual hook guard missing in $f"; exit 1; }
+            grep -q "${HOOKS[$f]}" "$SRC/$f" || { echo "::error::${HOOKS[$f]} call-site missing in $f"; exit 1; }
+          done
+          echo "✅ all required ReSukiSU manual hook call-sites present"
           grep -qE '^CONFIG_TOUCHSCREEN_FTS_DIRECTORY="FT8722"$' "$DC" || { echo "::error::FT8722 directory missing"; exit 1; }
           grep -qE '^CONFIG_KSU_SUSFS_SUS_MAP=n$|^# CONFIG_KSU_SUSFS_SUS_MAP is not set$' "$DC" || { echo "::error::unexpected SUS_MAP state"; exit 1; }
           grep -q 'SUSFS_VERSION.*2\.2\.0' "$SRC/include/linux/susfs.h" || { echo "::error::SUSFS 2.2.0 header not found"; exit 1; }
           grep -q 'EXPECTED_HASH_RESUKISU' "$SRC/drivers/kernelsu/manager/manager_sign.h" || { echo "::error::ReSukiSU signature table missing"; exit 1; }
-          if [ -f "$GITHUB_WORKSPACE/output_apk/ReSuKISU_Manager_4.14-compat-arm64-signed.apk" ]; then
-            read -r COMPAT_SIZE COMPAT_HASH < <(python3 "$GITHUB_WORKSPACE/.github/scripts/extract_apk_v2_cert.py" "$GITHUB_WORKSPACE/output_apk/ReSuKISU_Manager_4.14-compat-arm64-signed.apk")
-            test -n "$COMPAT_SIZE"
-            test -n "$COMPAT_HASH"
-            grep -q "$COMPAT_HASH" "$SRC/drivers/kernelsu/manager/manager_sign.h" || { echo "::error::compat hash missing from manager_sign.h"; exit 1; }
-            grep -q 'EXPECTED_HASH_RESUKISU' "$SRC/drivers/kernelsu/manager/apk_sign.c" || { echo "::error::ReSukiSU signature key missing from apk_sign.c"; exit 1; }
-            grep -q "$COMPAT_HASH" "$SRC/out/vmlinux" || { echo "::error::compat hash missing from final vmlinux"; exit 1; }
-            python3 "$GITHUB_WORKSPACE/.github/scripts/check_image_hash.py" "$SRC/out/arch/arm64/boot/Image.gz-dtb" "$COMPAT_HASH"
-            echo "✅ compatibility Manager certificate paired in vmlinux and packaged Image: size=$COMPAT_SIZE sha256=$COMPAT_HASH"
-          fi
+          read -r OFFICIAL_SIZE OFFICIAL_HASH < <(python3 "$GITHUB_WORKSPACE/.github/scripts/extract_apk_v2_cert.py" "$GITHUB_WORKSPACE/output_apk/ReSuKISU_v4.1.0_35002-arm64-v8a-official.apk")
+          test "$OFFICIAL_SIZE" = 887
+          test "$OFFICIAL_HASH" = d3469712b6214462764a1d8d3e5cbe1d6819a0b629791b9f4101867821f1df64
+          grep -q "$OFFICIAL_HASH" "$SRC/drivers/kernelsu/manager/manager_sign.h" || { echo "::error::official Manager hash missing from manager_sign.h"; exit 1; }
+          grep -q 'EXPECTED_HASH_RESUKISU' "$SRC/drivers/kernelsu/manager/apk_sign.c" || { echo "::error::ReSukiSU signature key missing from apk_sign.c"; exit 1; }
+          grep -q "$OFFICIAL_HASH" "$SRC/out/vmlinux" || { echo "::error::official Manager hash missing from final vmlinux"; exit 1; }
+          python3 "$GITHUB_WORKSPACE/.github/scripts/check_image_hash.py" "$IMG" "$OFFICIAL_HASH"
+          echo "✅ official ReSukiSU Manager certificate paired: size=$OFFICIAL_SIZE sha256=$OFFICIAL_HASH"
           echo "✅ final kernel config: KSU + multi-manager + SUSFS 2.2.0 + FT8722"
           echo "✅ ReSukiSU signature table present"
 
