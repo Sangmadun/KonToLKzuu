@@ -20,10 +20,10 @@ if data[footer + 8:footer + 24] != b"APK Sig Block 42":
     raise SystemExit("APK Signing Block footer not found")
 block_size = u64(footer)
 block_start = cd_offset - block_size - 8
-if data[block_start + 8:block_start + 16] != struct.pack("<Q", block_size):
+if data[block_start:block_start + 8] != struct.pack("<Q", block_size):
     raise SystemExit("APK Signing Block header mismatch")
 
-pos = block_start + 16
+pos = block_start + 8
 end = footer
 v2 = None
 while pos < end:
