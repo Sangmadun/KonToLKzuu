@@ -320,9 +320,10 @@ jobs:
             grep -qE "^${c}=y$" "$DC" || { echo "::error::$c is not enabled in final .config"; exit 1; }
           done
           grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC" || { echo "::error::KSU manual hook config is not enabled"; exit 1; }
-          # Official Manager 35002 requires the matching kernel ABI; reject legacy 11872.
-          grep -R -nE 'KSU_VERSION[[:space:]]*[:=][[:space:]]*35002|DKERNEL_SU_VERSION=35002' "$SRC/drivers/kernelsu" >/dev/null || { echo "::error::KSU ABI 35002 is not present in compiled source"; exit 1; }
-          ! grep -R -nE 'KERNEL_SU_VERSION[[:space:]]*(=| )+11872|-DKERNEL_SU_VERSION=11872' "$SRC/drivers/kernelsu" || { echo "::error::legacy KSU ABI 11872 remains"; exit 1; }
+          # Official Manager 35002 requires the matching ABI embedded in the image.
+          grep -q 'resukisu_kernel_abi_version' "$SRC/out/vmlinux" || { echo "::error::KSU ABI marker missing from vmlinux"; exit 1; }
+          grep -q '35002' "$SRC/out/vmlinux" || { echo "::error::KSU ABI 35002 missing from vmlinux"; exit 1; }
+          python3 -c 'import sys; [(lambda p,b: (_ for _ in ()).throw(SystemExit(f"legacy ABI 11872 found in {p}")) if b"11872" in b else (_ for _ in ()).throw(SystemExit(f"ABI 35002 missing in {p}")) if b"35002" not in b else None)(p,open(p,"rb").read()) for p in sys.argv[1:]]; print("ABI 35002 present in vmlinux and Image.gz-dtb; legacy 11872 absent")' "$SRC/out/vmlinux" "$IMG"
           ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' "$DC" || { echo "::error::tracepoint hook must be disabled"; exit 1; }
           declare -A HOOKS=(
             [kernel/sys.c]=ksu_handle_setresuid
