@@ -6,6 +6,11 @@ ARCH="${2:-arm64}"
 
 cd kernel-source
 
+# The Manager certificate is paired immediately before this build. Do not
+# reuse stale KSU objects or an old boot image from a prior output tree.
+rm -rf out
+export CCACHE_DISABLE=1
+
 # Patching Defconfig
 DEFCONFIG_FILE="arch/arm64/configs/${KERNEL_DEFCONFIG}"
 set_config() {
