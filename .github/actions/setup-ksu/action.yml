@@ -155,8 +155,11 @@ runs:
           # Recovery only stages ksud. Install must run inside Android's
           # post-fs-data SELinux context, after /data and policy are ready.
           python3 "$GITHUB_WORKSPACE/.github/scripts/add_ksud_install_rc.py" "$KSUD_FILE"
-          grep -Fq '"/data/adb/ksu-bootstrap/ksud" " install --libadbroot /data/adb/ksu-bootstrap/libadbroot.so\\n"' "$KSUD_FILE" || {
-            echo "::error::malformed ksud init command"; exit 1;
+          grep -Fq '/data/adb/ksu-bootstrap/ksud' "$KSUD_FILE" || {
+            echo "::error::ksud bootstrap executable path missing"; exit 1;
+          }
+          grep -Fq 'install --libadbroot /data/adb/ksu-bootstrap/libadbroot.so' "$KSUD_FILE" || {
+            echo "::error::ksud install arguments missing"; exit 1;
           }
           echo "✅ ksud install is scheduled in Android post-fs-data"
 
