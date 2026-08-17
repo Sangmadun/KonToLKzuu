@@ -171,10 +171,11 @@ runs:
           unzip -p "$ZIPFILE" resukisu-bootstrap/ksud > "$adb/ksud" || abort "Cannot extract official ksud";
           unzip -p "$ZIPFILE" resukisu-bootstrap/libadbroot.so > "$adb/ksu/lib/libadbroot.so" || abort "Cannot extract libadbroot";
           chmod 0755 "$adb/ksud" "$adb/ksu/lib/libadbroot.so";
-          "$adb/ksud" install --libadbroot "$adb/ksu/lib/libadbroot.so" || abort "ksud install failed";
-          [ -x "$adb/ksud" ] || abort "ksud missing after install";
-          [ -x "$adb/ksu/bin/ksud" ] || abort "ksud symlink missing after install";
-          ui_print " [✓] ReSukiSU userspace bootstrap installed";
+          # Do not execute ksud from recovery: it requires the Android
+          # userspace/SELinux domain. The kernel init hook runs `install`
+          # after post-fs-data in the real Android environment.
+          [ -x "$adb/ksud" ] || abort "ksud bootstrap missing after extraction";
+          ui_print " [✓] ReSukiSU userspace bootstrap staged; Android init will install it";
         }
         install_resukisu_userspace;
         EOF_AK3
