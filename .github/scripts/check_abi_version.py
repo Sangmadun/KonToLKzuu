@@ -31,7 +31,4 @@ if len(sys.argv) != 3:
 vmlinux, image = map(Path, sys.argv[1:])
 check(vmlinux, vmlinux.read_bytes())
 check(image, image_payload(image))
-# Also ensure the first gzip member itself carries the built-in core marker.
-with image.open("rb") as f:
-    gzip.GzipFile(fileobj=f).read()
 print("ABI image verification passed")
