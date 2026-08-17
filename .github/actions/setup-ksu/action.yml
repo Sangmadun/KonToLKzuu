@@ -77,9 +77,15 @@ runs:
           CERT_HASH=$(sha256sum "$TMP_SIG/cert.der" | awk '{print $1}')
           SIGN_H="drivers/kernelsu/manager/manager_sign.h"
           SIGN_C="drivers/kernelsu/manager/apk_sign.c"
+          test -f "$SIGN_H" || { echo "ERROR: manager_sign.h missing after KSU copy"; exit 1; }
+          test -f "$SIGN_C" || { echo "ERROR: apk_sign.c missing after KSU copy"; exit 1; }
+          # Remove stale CI entry so reruns are deterministic.
+          sed -i '/EXPECTED_SIZE_CAMELLIA_COMPAT/d;/EXPECTED_HASH_CAMELLIA_COMPAT/d' "$SIGN_H"
+          sed -i '/EXPECTED_SIZE_CAMELLIA_COMPAT/d;/EXPECTED_HASH_CAMELLIA_COMPAT/d' "$SIGN_C"
           printf '\n// CI-paired Camellia 4.14 compatibility Manager\n#define EXPECTED_SIZE_CAMELLIA_COMPAT %s\n#define EXPECTED_HASH_CAMELLIA_COMPAT \"%s\"\n' "$CERT_SIZE" "$CERT_HASH" >> "$SIGN_H"
           sed -i '/static apk_sign_key_t apk_sign_keys\[\] = {/a\    { EXPECTED_SIZE_CAMELLIA_COMPAT, EXPECTED_HASH_CAMELLIA_COMPAT }, /* Camellia compat Manager */' "$SIGN_C"
           grep -q 'EXPECTED_HASH_CAMELLIA_COMPAT' "$SIGN_H"
+          grep -q 'EXPECTED_SIZE_CAMELLIA_COMPAT' "$SIGN_C"
           echo "Paired compatibility certificate: size=$CERT_SIZE sha256=$CERT_HASH"
           rm -rf "$TMP_SIG"
         fi
