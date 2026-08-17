@@ -224,6 +224,42 @@ jobs:
           KSU_FORK: "${{ inputs.ksu_fork }}"
         run: python3 .github/scripts/telegram_notify.py progress
 
+      - name: Pair Manager Certificate After All Kernel Injections
+        if: inputs.manifest_name == 'camellia' && (inputs.ksu_fork == 'ReSuKISU' || inputs.ksu_fork == 'ReSukiSU')
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$GITHUB_WORKSPACE/output_apk/ReSuKISU_Manager_4.14-compat-arm64-signed.apk"
+          SRC="$GITHUB_WORKSPACE/kernel-source"
+          SIGN_H="$SRC/drivers/kernelsu/manager/manager_sign.h"
+          SIGN_C="$SRC/drivers/kernelsu/manager/apk_sign.c"
+          [ -f "$APK" ] && [ -f "$SIGN_H" ] && [ -f "$SIGN_C" ]
+          read -r CERT_SIZE CERT_HASH < <(python3 "$GITHUB_WORKSPACE/.github/scripts/extract_apk_v2_cert.py" "$APK")
+          python3 - "$SIGN_H" "$CERT_SIZE" "$CERT_HASH" <<'PY'
+          from pathlib import Path
+          import sys
+          p = Path(sys.argv[1])
+          size, digest = sys.argv[2], sys.argv[3]
+          lines = p.read_text().splitlines()
+          found_size = found_hash = False
+          out = []
+          for line in lines:
+              if line.startswith('#define EXPECTED_SIZE_RESUKISU '):
+                  line = f'#define EXPECTED_SIZE_RESUKISU {size}'
+                  found_size = True
+              elif line.startswith('#define EXPECTED_HASH_RESUKISU '):
+                  line = f'#define EXPECTED_HASH_RESUKISU "{digest}"'
+                  found_hash = True
+              out.append(line)
+          if not (found_size and found_hash):
+              raise SystemExit(f'manager signature macros missing: size={found_size} hash={found_hash}')
+          p.write_text('\n'.join(out) + '\n')
+          PY
+          grep -q "#define EXPECTED_SIZE_RESUKISU $CERT_SIZE" "$SIGN_H"
+          grep -q "#define EXPECTED_HASH_RESUKISU \"$CERT_HASH\"" "$SIGN_H"
+          grep -q 'EXPECTED_HASH_RESUKISU' "$SIGN_C"
+          echo "✅ final pre-build Manager pairing: size=$CERT_SIZE sha256=$CERT_HASH"
+
       - name: Build Kernel Image
         run: bash .github/scripts/build_kernel.sh "${{ env.KERNEL_DEFCONFIG }}" "${{ env.ARCH }}"
 
@@ -249,9 +285,10 @@ jobs:
             test -n "$COMPAT_SIZE"
             test -n "$COMPAT_HASH"
             grep -q "$COMPAT_HASH" "$SRC/drivers/kernelsu/manager/manager_sign.h" || { echo "::error::compat hash missing from manager_sign.h"; exit 1; }
-            grep -q 'EXPECTED_HASH_CAMELLIA_COMPAT' "$SRC/drivers/kernelsu/manager/apk_sign.c" || { echo "::error::compat key missing from apk_sign.c"; exit 1; }
+            grep -q 'EXPECTED_HASH_RESUKISU' "$SRC/drivers/kernelsu/manager/apk_sign.c" || { echo "::error::ReSukiSU signature key missing from apk_sign.c"; exit 1; }
             grep -q "$COMPAT_HASH" "$SRC/out/vmlinux" || { echo "::error::compat hash missing from final vmlinux"; exit 1; }
-            echo "✅ compatibility Manager certificate paired: size=$COMPAT_SIZE sha256=$COMPAT_HASH"
+            gzip -dc "$SRC/out/arch/arm64/boot/Image.gz-dtb" 2>/dev/null | strings | grep -q "$COMPAT_HASH" || { echo "::error::compat hash missing from exact packaged Image.gz-dtb"; exit 1; }
+            echo "✅ compatibility Manager certificate paired in vmlinux and packaged Image: size=$COMPAT_SIZE sha256=$COMPAT_HASH"
           fi
           echo "✅ final kernel config: KSU + multi-manager + SUSFS 2.2.0 + FT8722"
           echo "✅ ReSukiSU signature table present"
