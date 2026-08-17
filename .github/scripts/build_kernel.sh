@@ -26,9 +26,6 @@ set_config() {
   fi
 }
 
-set_config "CONFIG_KPROBES" "y" "$DEFCONFIG_FILE"
-set_config "CONFIG_HAVE_KPROBES" "y" "$DEFCONFIG_FILE"
-set_config "CONFIG_KPROBE_EVENTS" "y" "$DEFCONFIG_FILE"
 set_config "CONFIG_KSU" "y" "$DEFCONFIG_FILE"
 
 # Prepare Toolchain & Ccache

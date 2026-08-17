@@ -80,6 +80,17 @@ runs:
           sed -i '1iccflags-y += -I$(srctree)/drivers/kernelsu -I$(srctree)/drivers/kernelsu/include -DKERNEL_SU_VERSION=11872' drivers/kernelsu/Makefile
         fi
 
+        # ReSukiSU upstream places the hook selector and SUSFS in one Kconfig
+        # choice. Legacy 4.14 needs both manual syscall hooks and SUSFS, so make
+        # these independent bools while retaining the original dependencies.
+        KSU_KCONFIG="drivers/kernelsu/Kconfig"
+        # The ReSukiSU Kconfig has one hook/SUSFS choice block. Remove only its
+        # delimiters so both legacy manual hooks and SUSFS can be enabled.
+        grep -q 'prompt "KernelSU Hooking Method"' "$KSU_KCONFIG"
+        sed -i '/^choice$/d; /^endchoice$/d' "$KSU_KCONFIG"
+        grep -q '^config KSU_MANUAL_HOOK$' "$KSU_KCONFIG"
+        grep -q '^config KSU_SUSFS$' "$KSU_KCONFIG"
+
         # Injeksi ksu_cred secara presisi
         echo "🔧 Injecting extern ksu_cred declaration safely into KernelSU C files..."
         find drivers/kernelsu/ -type f -name "*.c" | while read -r file; do
