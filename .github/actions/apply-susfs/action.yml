@@ -37,6 +37,10 @@ runs:
           echo "    -> $rel"
         done < <(find "$TREE" -type f)
         echo "    installed $COUNT files"
+
+        # ReSukiSU SUSFS inline mode requires real call-sites in the exact
+        # post-merge vendor tree. Apply them only after the SUSFS tree exists.
+        python3 "$GITHUB_WORKSPACE/.github/scripts/apply_resukisu_inline_hooks.py" "$GITHUB_WORKSPACE/kernel-source"
         echo "    SUSFS_VERSION: $(grep -E '^#define SUSFS_VERSION' include/linux/susfs.h)"
 
         # ---------------------------------------------------------------
