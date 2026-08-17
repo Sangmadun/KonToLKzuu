@@ -15,6 +15,13 @@ runs:
         cd toolchain
 
         case "${{ inputs.toolchain }}" in
+          "clang-22")
+            echo "Downloading LLVM/Clang 22.1.0..."
+            wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.0/LLVM-22.1.0-Linux-X64.tar.xz
+            mkdir clang && tar -xf LLVM-22.1.0-Linux-X64.tar.xz -C clang --strip-components=1
+            rm -f LLVM-22.1.0-Linux-X64.tar.xz
+            clang/bin/clang --version
+            ;;
           "proton-clang")
             echo "Downloading Proton-Clang..."
             git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang

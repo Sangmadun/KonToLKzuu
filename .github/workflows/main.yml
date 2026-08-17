@@ -62,6 +62,7 @@ on:
         default: 'proton-clang'
         options:
           - 'proton-clang'
+          - 'clang-22'
           - 'aosp-clang'
           - 'zyc-clang'
           - 'azure-clang'
