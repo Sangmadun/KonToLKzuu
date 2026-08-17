@@ -87,7 +87,7 @@ runs:
         # The ReSukiSU Kconfig has one hook/SUSFS choice block. Remove only its
         # delimiters so both legacy manual hooks and SUSFS can be enabled.
         grep -q 'prompt "KernelSU Hooking Method"' "$KSU_KCONFIG"
-        sed -i '/^choice$/d; /^endchoice$/d' "$KSU_KCONFIG"
+        sed -i '/^choice$/d; /^endchoice$/d; /^\s*prompt "KernelSU Hooking Method"$/d; /^\s*default KSU_TRACEPOINT_HOOK$/d' "$KSU_KCONFIG"
         grep -q '^config KSU_MANUAL_HOOK$' "$KSU_KCONFIG"
         grep -q '^config KSU_SUSFS$' "$KSU_KCONFIG"
 

@@ -244,6 +244,10 @@ jobs:
           sed -i 's/^CONFIG_KPROBES=y$/# CONFIG_KPROBES is not set/' "$DC"
           sed -i 's/^CONFIG_HAVE_KPROBES=y$/# CONFIG_HAVE_KPROBES is not set/' "$DC"
           sed -i 's/^CONFIG_KPROBE_EVENTS=y$/# CONFIG_KPROBE_EVENTS is not set/' "$DC"
+          for k in CONFIG_KSU_MANUAL_HOOK_AUTO_SETUID_HOOK CONFIG_KSU_MANUAL_HOOK_AUTO_INITRC_HOOK CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK; do
+            sed -i "/^$k=/d; /^# $k is not set$/d" "$DC"
+            echo "# $k is not set" >> "$DC"
+          done
           grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC"
           ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' "$DC"
           echo '✅ final manual-hook config enforced after all feature injectors'
