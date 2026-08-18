@@ -17,6 +17,10 @@ inputs:
     description: "Include BBR flag"
     required: false
     default: "false"
+  resukisu_bootstrap:
+    description: "Bundle and stage official ReSukiSU userspace payload"
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
@@ -69,6 +73,7 @@ runs:
         # the recovery-side installer seed /data/adb before first boot.
         # This is not an APK replacement and does not create a fake su.
         # -----------------------------------------------------------------
+        if [ "${{ inputs.resukisu_bootstrap }}" = "true" ]; then
         OFFICIAL_APK=$(find ../output_apk -maxdepth 1 -type f -name '*.apk' | head -n 1 || true)
         [ -n "$OFFICIAL_APK" ] || { echo "❌ Official Manager APK missing for ksud bootstrap"; exit 1; }
         mkdir -p resukisu-bootstrap
@@ -93,6 +98,7 @@ runs:
         chmod 0755 resukisu-bootstrap/bootstrap-meta.sh
         bash -n resukisu-bootstrap/bootstrap-meta.sh
         echo "✅ official meta-overlayfs payload verified"
+        fi
 
         [ -f "${OUT_DIR}/dtb" ] && cp "${OUT_DIR}/dtb" .
         [ -f "${OUT_DIR}/dtbo.img" ] && cp "${OUT_DIR}/dtbo.img" .
@@ -195,7 +201,9 @@ runs:
           [ -s "$bootstrap/meta-overlayfs-13100-1.3.1.zip" ] || abort "meta-overlayfs payload missing after extraction";
           ui_print " [✓] ReSukiSU and meta-overlayfs payloads staged; Android init will install them";
         }
-        install_resukisu_userspace;
+        if [ "${{ inputs.resukisu_bootstrap }}" = "true" ]; then
+          install_resukisu_userspace;
+        fi
         EOF_AK3
 
         # -----------------------------------------------------------------

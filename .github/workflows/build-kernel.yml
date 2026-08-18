@@ -194,7 +194,8 @@ jobs:
           # Android options (DEVTMPFS, SYSVIPC, TMPFS_XATTR, NF_TABLES, ...) that the
           # real flyme build shipped. Building from it => non-booting kernel. So use
           # the full config extracted from the known-good flyme boot image, already
-          # augmented with FT8722 + panel + KSU/SUSFS + SUS_MAP off.
+          # augmented with FT8722 + panel + KSU/SUSFS. SUS_MAP is enabled later
+          # only after its exact legacy-4.14 source port is installed.
           if [ -f "$FULL" ]; then
             cp -f "$FULL" "$DC"
             echo "[defconfig] installed full config ($(wc -l < "$DC") lines)"
@@ -206,7 +207,7 @@ jobs:
             grep -qE "^$c=y" "$DC" && echo "  ok $c" || { echo "::error::$c missing in defconfig"; exit 1; }
           done
           grep -qE "CONFIG_TOUCHSCREEN_FTS_DIRECTORY=\"FT8722\"" "$DC" && echo "  ok FT8722 dir" || { echo "::error::FT8722 dir missing"; exit 1; }
-          grep -qE "^# CONFIG_KSU_SUSFS_SUS_MAP is not set" "$DC" && echo "  ok SUS_MAP off" || echo "  warn: SUS_MAP not explicitly off"
+          echo "  SUS_MAP final state is enforced after feature injection"
 
       - name: Inject FT8722 Touch Driver (flyme base)
         if: inputs.manifest_name == 'camellia'
@@ -220,6 +221,8 @@ jobs:
       - name: Apply SUSFS Patch & Configs
         if: inputs.include_susfs == true
         uses: ./.github/actions/apply-susfs
+        with:
+          resukisu_legacy_hooks: ${{ inputs.manifest_name == 'camellia' && (inputs.ksu_fork == 'ReSuKISU' || inputs.ksu_fork == 'ReSukiSU') }}
 
       - name: Configure ReSukiSU SUSFS Inline Hooks (legacy 4.14)
         if: inputs.manifest_name == 'camellia' && (inputs.ksu_fork == 'ReSuKISU' || inputs.ksu_fork == 'ReSukiSU')
@@ -325,7 +328,15 @@ jobs:
           echo "✅ final pre-build Manager pairing: size=$CERT_SIZE sha256=$CERT_HASH"
 
       - name: Build Kernel Image
+        env:
+          REQUIRE_CLANG_22: ${{ inputs.manifest_name == 'camellia' && (inputs.ksu_fork == 'ReSuKISU' || inputs.ksu_fork == 'ReSukiSU') && '1' || '0' }}
         run: bash .github/scripts/build_kernel.sh "${{ env.KERNEL_DEFCONFIG }}" "${{ env.ARCH }}"
+
+      - name: Reject non-pinned compiler for Camellia release
+        if: inputs.manifest_name == 'camellia' && (inputs.ksu_fork == 'ReSuKISU' || inputs.ksu_fork == 'ReSukiSU') && inputs.toolchain != 'clang-22'
+        run: |
+          echo "::error::Camellia ReSukiSU release requires LLVM/Clang 22.1.0 (toolchain=clang-22)"
+          exit 1
 
       - name: Verify ReSukiSU/SUSFS kernel contract
         if: inputs.manifest_name == 'camellia'
@@ -376,7 +387,25 @@ jobs:
           for stale in CONFIG_KSU_SUSFS_SUS_OVERLAYFS CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT CONFIG_KSU_SUSFS_TRY_UMOUNT CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT; do
             ! grep -q "^$stale=" "$DC" || { echo "::error::orphan SUSFS config leaked: $stale"; exit 1; }
           done
-          grep -qE '^CONFIG_KSU_SUSFS_SUS_MAP=n$|^# CONFIG_KSU_SUSFS_SUS_MAP is not set$' "$DC" || { echo "::error::unexpected SUS_MAP state"; exit 1; }
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MAP=y$' "$DC" || { echo "::error::SUS_MAP missing from final config"; exit 1; }
+          TM="$SRC/fs/proc/task_mmu.c"
+          BASE="$SRC/fs/proc/base.c"
+          grep -q 'SUSMAP_414_PORT_V2' "$TM" || { echo "::error::SUS_MAP 4.14 V2 port marker missing"; exit 1; }
+          test "$(sha256sum "$TM" | cut -d' ' -f1)" = 40651c75e81f9ba5ebc8c4bbcadb83ec5cdc19bf9094324508f14110d9ebe558 || { echo "::error::SUS_MAP task_mmu exact digest mismatch"; exit 1; }
+          test "$(grep -F -c 'SUSFS_IS_INODE_SUS_MAP' "$TM")" -eq 4 || { echo "::error::maps/smaps/rollup/pagemap SUS_MAP hook count invalid"; exit 1; }
+          grep -q 'hidden but iterator cache stays coherent' "$TM" || { echo "::error::smaps iterator-cache preservation missing"; exit 1; }
+          grep -q 'pm.buffer\[susmap_idx\]\.pme = 0' "$TM" || { echo "::error::pagemap positional zeroing missing"; exit 1; }
+          grep -q 'first_visible_start' "$TM" || { echo "::error::smaps_rollup visible boundary tracking missing"; exit 1; }
+          test "$(grep -F -c 'SUSFS_IS_INODE_SUS_MAP' "$BASE")" -eq 5 || { echo "::error::map_files lookup/count/fill/revalidate/readlink SUS_MAP hooks incomplete"; exit 1; }
+          grep -q '^#define CMD_SUSFS_ADD_SUS_MAP 0x60020$' "$SRC/include/linux/susfs_def.h" || { echo "::error::SUS_MAP command ABI mismatch"; exit 1; }
+          ! test -e "$SRC/drivers/kernelsu/include/linux/susfs_def.h" || { echo "::error::shadow SUSFS ABI header exists"; exit 1; }
+          grep -q 'case CMD_SUSFS_ADD_SUS_MAP' "$SRC/drivers/kernelsu/supercall/dispatch.c" || { echo "::error::SUS_MAP supercall dispatch missing"; exit 1; }
+          grep -q 'susfs_add_sus_map(arg)' "$SRC/drivers/kernelsu/supercall/dispatch.c" || { echo "::error::SUS_MAP supercall handler missing"; exit 1; }
+          grep -q 'set_bit(AS_FLAGS_SUS_MAP' "$SRC/fs/susfs.c" || { echo "::error::SUS_MAP inode registration missing"; exit 1; }
+          test "$(grep -F -c 'CONFIG_KSU_SUSFS_SUS_MAP\\n' "$SRC/fs/susfs.c")" -ge 1 || { echo "::error::SUS_MAP missing from enabled_features response"; exit 1; }
+          grep -q 'char[[:space:]]*target_pathname\[SUSFS_MAX_LEN_PATHNAME\]' "$SRC/include/linux/susfs.h" || { echo "::error::SUS_MAP kernel struct path layout mismatch"; exit 1; }
+          grep -q 'int[[:space:]]*err;' "$SRC/include/linux/susfs.h" || { echo "::error::SUS_MAP kernel struct error field missing"; exit 1; }
+          echo "✅ SUS_MAP source + command ABI + procfs interfaces are fail-closed"
           grep -q 'SUSFS_VERSION.*2\.2\.0' "$SRC/include/linux/susfs.h" || { echo "::error::SUSFS 2.2.0 header not found"; exit 1; }
           grep -q 'EXPECTED_HASH_RESUKISU' "$SRC/drivers/kernelsu/manager/manager_sign.h" || { echo "::error::ReSukiSU signature table missing"; exit 1; }
           read -r OFFICIAL_SIZE OFFICIAL_HASH < <(python3 "$GITHUB_WORKSPACE/.github/scripts/extract_apk_v2_cert.py" "$GITHUB_WORKSPACE/output_apk/ReSuKISU_v4.1.0_35002-arm64-v8a-official.apk")
@@ -397,8 +426,10 @@ jobs:
           include_susfs: ${{ inputs.include_susfs }}
           include_bbg: ${{ inputs.include_bbg }}
           include_bbr: ${{ inputs.include_bbr }}
+          resukisu_bootstrap: ${{ inputs.manifest_name == 'camellia' && (inputs.ksu_fork == 'ReSuKISU' || inputs.ksu_fork == 'ReSukiSU') }}
 
       - name: Verify ReSukiSU userspace bootstrap payload
+        if: inputs.manifest_name == 'camellia' && (inputs.ksu_fork == 'ReSuKISU' || inputs.ksu_fork == 'ReSukiSU')
         shell: bash
         run: |
           set -euo pipefail

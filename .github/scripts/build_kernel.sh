@@ -33,6 +33,18 @@ rm -f "$GITHUB_WORKSPACE/toolchain/clang/bin/ld"
 export PATH="$GITHUB_WORKSPACE/toolchain/clang/bin:$GITHUB_WORKSPACE/toolchain/gcc64/bin:$GITHUB_WORKSPACE/toolchain/gcc32/bin:$PATH"
 export CCACHE_DIR=~/.cache/ccache
 
+# This Camellia/ReSukiSU release contract is pinned to upstream LLVM 22.1.0.
+# Fail before compilation instead of silently consuming an older compiler from
+# PATH or a stale toolchain directory.
+CLANG_VERSION="$(clang --version | head -n 1)"
+echo "Compiler: $CLANG_VERSION"
+if [ "${REQUIRE_CLANG_22:-0}" = "1" ]; then
+  case "$CLANG_VERSION" in
+    *"clang version 22.1.0"*) ;;
+    *) echo "ERROR: expected LLVM/Clang 22.1.0, got: $CLANG_VERSION"; exit 1 ;;
+  esac
+fi
+
 # ------------------------------------------ 
 export KBUILD_BUILD_USER="root"
 export KBUILD_BUILD_HOST="rwxrxrx"
@@ -51,6 +63,13 @@ make -j$(nproc --all) O=out \
   CROSS_COMPILE=aarch64-linux-android- \
   CROSS_COMPILE_ARM32=arm-linux-androideabi- \
   LD=ld.lld
+
+if [ "${REQUIRE_CLANG_22:-0}" = "1" ]; then
+  strings out/vmlinux | grep -F 'clang version 22.1.0' >/dev/null || {
+    echo "ERROR: LLVM/Clang 22.1.0 marker missing from final vmlinux"
+    exit 1
+  }
+fi
 
 echo "=================================================="
 echo "📊 CCACHE STATS"

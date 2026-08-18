@@ -1,5 +1,10 @@
 name: "Apply SUSFS Patch & Configs"
 description: "Install SUSFS v2.2.0 for camellia 4.14 via pre-merged whole-file tree (3-way merged: camellia device code + FlopKernel/sidex15 v2.2.0 hooks). FTS FT8722 preserved. No fuzzy patching."
+inputs:
+  resukisu_legacy_hooks:
+    description: "Apply exact Camellia ReSukiSU Inline + SUS_MAP hooks"
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
@@ -38,9 +43,14 @@ runs:
         done < <(find "$TREE" -type f)
         echo "    installed $COUNT files"
 
-        # ReSukiSU SUSFS inline mode requires real call-sites in the exact
-        # post-merge vendor tree. Apply them only after the SUSFS tree exists.
-        python3 "$GITHUB_WORKSPACE/.github/scripts/apply_resukisu_inline_hooks.py" "$GITHUB_WORKSPACE/kernel-source"
+        if [ "${{ inputs.resukisu_legacy_hooks }}" = "true" ]; then
+          # ReSukiSU SUSFS inline mode requires real call-sites in the exact
+          # post-merge vendor tree. Apply them only after the SUSFS tree exists.
+          python3 "$GITHUB_WORKSPACE/.github/scripts/apply_resukisu_inline_hooks.py" "$GITHUB_WORKSPACE/kernel-source"
+          # SUS_MAP needs real procfs hooks on legacy 4.14. The injector is
+          # exact-pattern/fail-closed and never imports a foreign task_mmu.c.
+          python3 "$GITHUB_WORKSPACE/.github/scripts/apply_susmap_414.py" "$GITHUB_WORKSPACE/kernel-source"
+        fi
         echo "    SUSFS_VERSION: $(grep -E '^#define SUSFS_VERSION' include/linux/susfs.h)"
 
         # ---------------------------------------------------------------

@@ -28,6 +28,7 @@ runs:
           "ReSuKISU"|"ReSukiSU")
             REPO="https://github.com/ReSukiSU/ReSukiSU.git"
             BRANCH="main"
+            PINNED_COMMIT="829f61fb008c895841b98aca5833c18daae6f145"
             ;;
           "KSU-Next")
             REPO="https://github.com/KernelSU-Next/KernelSU-Next.git"
@@ -46,6 +47,13 @@ runs:
         if ! git clone --depth=1 -b "$BRANCH" "$REPO" KernelSU_temp 2>/dev/null; then
           echo "⚠️ Branch $BRANCH not found, attempting default branch..."
           git clone --depth=1 "$REPO" KernelSU_temp
+        fi
+        if [ -n "${PINNED_COMMIT:-}" ]; then
+          git -C KernelSU_temp fetch --depth=1 origin "$PINNED_COMMIT"
+          git -C KernelSU_temp checkout --detach "$PINNED_COMMIT"
+          test "$(git -C KernelSU_temp rev-parse HEAD)" = "$PINNED_COMMIT" || {
+            echo "::error::KSU source commit pin mismatch"; exit 1;
+          }
         fi
 
         mkdir -p drivers/kernelsu
@@ -183,78 +191,16 @@ runs:
           sed -i '1i#include <linux/types.h>\n#include <linux/susfs_def.h>\n#ifndef SUSFS_MAGIC\n#define SUSFS_MAGIC 0xA5A5A5A5\n#endif' "$SUPERCALL_FILE"
         fi
 
-        # Injeksi makro CMD_SUSFS_* ke dispatch.c. Weak stubs DIHAPUS:
-        # dulu perlu karena susfs core absen, tapi sekarang SUSFS v2.2.0 core
-        # LENGKAP (fs/susfs.c + susfs_def.h static-inline), jadi weak stub malah
-        # bentrok ("static declaration follows non-static declaration").
+        # Keep the ABI marker, but never duplicate SUSFS command IDs here.
+        # The post-setup SUSFS 2.2.0 tree is the single source of truth for
+        # SUSFS_MAGIC, CMD_SUSFS_* and inode-state definitions. A shadow header
+        # under drivers/kernelsu/include/linux can silently win by include order.
         DISPATCH_FILE="drivers/kernelsu/supercall/dispatch.c"
         if [ -f "$DISPATCH_FILE" ]; then
-          echo "🔧 Injecting CMD_SUSFS macros only (no weak stubs; core provides symbols)..."
-          sed -i '1i__attribute__((used, section(".rodata"))) static const unsigned int resukisu_kernel_abi_version = 35002;\n#include <linux/types.h>\n#include <linux/susfs_def.h>\n#ifndef KERNEL_SU_VERSION\n#define KERNEL_SU_VERSION 35002\n#endif\nextern bool ksu_late_loaded;\n#ifndef CMD_SUSFS_ADD_SUS_PATH\n#define CMD_SUSFS_ADD_SUS_PATH 0x55555\n#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55556\n#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x55557\n#define CMD_SUSFS_ADD_SUS_KSTAT 0x55558\n#define CMD_SUSFS_UPDATE_SUS_KSTAT 0x55559\n#define CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY 0x5555a\n#define CMD_SUSFS_SET_UNAME 0x5555b\n#define CMD_SUSFS_ENABLE_LOG 0x5555c\n#define CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG 0x5555d\n#define CMD_SUSFS_ADD_OPEN_REDIRECT 0x5555e\n#define CMD_SUSFS_ADD_SUS_MAP 0x5555f\n#define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x55560\n#define CMD_SUSFS_SHOW_ENABLED_FEATURES 0x55561\n#define CMD_SUSFS_SHOW_VARIANT 0x55562\n#define CMD_SUSFS_SHOW_VERSION 0x55563\n#endif' "$DISPATCH_FILE"
+          echo "🔒 Using the canonical SUSFS 2.2.0 command ABI..."
+          sed -i '1i__attribute__((used, section(".rodata"))) static const unsigned int resukisu_kernel_abi_version = 35002;\n#include <linux/types.h>\n#include <linux/susfs_def.h>\n#ifndef KERNEL_SU_VERSION\n#define KERNEL_SU_VERSION 35002\n#endif\nextern bool ksu_late_loaded;' "$DISPATCH_FILE"
         fi
-
-        # Generasi susfs_def.h global
-        echo "🔧 Generating global susfs_def.h header..."
-        mkdir -p include/linux
-        mkdir -p drivers/kernelsu/include/linux
-
-        printf '%s\n' \
-          '#ifndef _SUSFS_DEF_H' \
-          '#define _SUSFS_DEF_H' \
-          '' \
-          '#include <linux/types.h>' \
-          '' \
-          '#ifndef SUSFS_MAGIC' \
-          '#define SUSFS_MAGIC 0xA5A5A5A5' \
-          '#endif' \
-          '' \
-          '#ifndef TASK_STRUCT_NON_ROOT_USER_APP_PROC' \
-          '#define TASK_STRUCT_NON_ROOT_USER_APP_PROC (1 << 0)' \
-          '#endif' \
-          '#ifndef INODE_STATE_SUS_KSTAT' \
-          '#define INODE_STATE_SUS_KSTAT (1 << 0)' \
-          '#endif' \
-          '#ifndef INODE_STATE_SUS_PATH' \
-          '#define INODE_STATE_SUS_PATH (1 << 1)' \
-          '#endif' \
-          '#ifndef INODE_STATE_SUS_MOUNT' \
-          '#define INODE_STATE_SUS_MOUNT (1 << 2)' \
-          '#endif' \
-          '#ifndef INODE_STATE_OPEN_REDIRECT' \
-          '#define INODE_STATE_OPEN_REDIRECT (1 << 3)' \
-          '#endif' \
-          '' \
-          '#ifndef DEFAULT_SUS_MNT_ID' \
-          '#define DEFAULT_SUS_MNT_ID 100000' \
-          '#endif' \
-          '#ifndef DEFAULT_SUS_MNT_GROUP_ID' \
-          '#define DEFAULT_SUS_MNT_GROUP_ID 100000' \
-          '#endif' \
-          '#ifndef DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE' \
-          '#define DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE 99999' \
-          '#endif' \
-          '' \
-          '#ifndef CMD_SUSFS_ADD_SUS_PATH' \
-          '#define CMD_SUSFS_ADD_SUS_PATH 0x55555' \
-          '#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55556' \
-          '#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x55557' \
-          '#define CMD_SUSFS_ADD_SUS_KSTAT 0x55558' \
-          '#define CMD_SUSFS_UPDATE_SUS_KSTAT 0x55559' \
-          '#define CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY 0x5555a' \
-          '#define CMD_SUSFS_SET_UNAME 0x5555b' \
-          '#define CMD_SUSFS_ENABLE_LOG 0x5555c' \
-          '#define CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG 0x5555d' \
-          '#define CMD_SUSFS_ADD_OPEN_REDIRECT 0x5555e' \
-          '#define CMD_SUSFS_ADD_SUS_MAP 0x5555f' \
-          '#define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x55560' \
-          '#define CMD_SUSFS_SHOW_ENABLED_FEATURES 0x55561' \
-          '#define CMD_SUSFS_SHOW_VARIANT 0x55562' \
-          '#define CMD_SUSFS_SHOW_VERSION 0x55563' \
-          '#endif' \
-          '' \
-          '#endif /* _SUSFS_DEF_H */' > include/linux/susfs_def.h
-
-        cp -f include/linux/susfs_def.h drivers/kernelsu/include/linux/susfs_def.h 2>/dev/null || true
+        rm -f drivers/kernelsu/include/linux/susfs_def.h
 
         # Keep KernelSU_temp: drivers/kernelsu is a symlink into this clone so
         # upstream Git/version and fail-closed Kbuild checks remain valid.

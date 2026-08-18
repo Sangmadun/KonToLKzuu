@@ -59,7 +59,7 @@ on:
         description: 'Select Clang Toolchain'
         required: true
         type: choice
-        default: 'proton-clang'
+        default: 'clang-22'
         options:
           - 'proton-clang'
           - 'clang-22'
