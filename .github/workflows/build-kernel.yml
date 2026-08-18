@@ -409,7 +409,7 @@ jobs:
           grep -q 'case CMD_SUSFS_ADD_SUS_MAP' "$SRC/drivers/kernelsu/supercall/dispatch.c" || { echo "::error::SUS_MAP supercall dispatch missing"; exit 1; }
           grep -q 'susfs_add_sus_map(arg)' "$SRC/drivers/kernelsu/supercall/dispatch.c" || { echo "::error::SUS_MAP supercall handler missing"; exit 1; }
           grep -q 'set_bit(AS_FLAGS_SUS_MAP' "$SRC/fs/susfs.c" || { echo "::error::SUS_MAP inode registration missing"; exit 1; }
-          test "$(grep -F -c 'CONFIG_KSU_SUSFS_SUS_MAP\\n' "$SRC/fs/susfs.c")" -ge 1 || { echo "::error::SUS_MAP missing from enabled_features response"; exit 1; }
+          grep -Fq 'copy_config_to_buf("CONFIG_KSU_SUSFS_SUS_MAP' "$SRC/fs/susfs.c" || { echo "::error::SUS_MAP missing from enabled_features response"; exit 1; }
           grep -q 'char[[:space:]]*target_pathname\[SUSFS_MAX_LEN_PATHNAME\]' "$SRC/include/linux/susfs.h" || { echo "::error::SUS_MAP kernel struct path layout mismatch"; exit 1; }
           grep -q 'int[[:space:]]*err;' "$SRC/include/linux/susfs.h" || { echo "::error::SUS_MAP kernel struct error field missing"; exit 1; }
           echo "✅ SUS_MAP source + command ABI + procfs interfaces are fail-closed"
