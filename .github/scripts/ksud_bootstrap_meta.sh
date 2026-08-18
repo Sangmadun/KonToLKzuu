@@ -38,8 +38,3 @@ fi
 sync
 touch "$MARKER" 2>/dev/null || true
 exit 0
-EOF
-chmod 0755 .github/scripts/ksud_bootstrap_meta.sh
-python3 -m py_compile .github/scripts/add_ksud_install_rc.py
-bash -n .github/scripts/ksud_bootstrap_meta.sh
-git diff --check
