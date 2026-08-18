@@ -1,0 +1,96 @@
+name: Build pinned ReSukiSU ksud
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RESUKISU_COMMIT: 829f61fb008c895841b98aca5833c18daae6f145
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-ksud:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout pipeline
+        uses: actions/checkout@v4
+
+      - name: Checkout exact ReSukiSU source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout https://github.com/ReSukiSU/ReSukiSU.git resukisu
+          git -C resukisu fetch --depth=1 origin "$RESUKISU_COMMIT"
+          git -C resukisu checkout --detach "$RESUKISU_COMMIT"
+          test "$(git -C resukisu rev-parse HEAD)" = "$RESUKISU_COMMIT"
+
+      - name: Verify SUS_MAP userspace ABI and CLI source
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAGIC=resukisu/userspace/ksud/src/android/susfs/api/magic.rs
+          CLI=resukisu/userspace/ksud/src/android/susfs/cli.rs
+          API=resukisu/userspace/ksud/src/android/susfs/api/features/sus_map.rs
+          grep -Eq 'CMD_SUSFS_ADD_SUS_MAP[^=]*=[[:space:]]*0x60020' "$MAGIC"
+          grep -Fq '#[command(name = "add_sus_map")]' "$CLI"
+          grep -Fq 'api::add_sus_map(&path)?' "$CLI"
+          grep -Fq 'susfsctl(CMD_SUSFS_ADD_SUS_MAP, &mut info)' "$API"
+          grep -Fq 'target_pathname: [u8; SUSFS_MAX_LEN_PATHNAME]' "$API"
+
+      - name: Setup Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: aarch64-linux-android
+          components: rust-src
+
+      - name: Install cargo-ndk
+        shell: bash
+        run: cargo install cargo-ndk --locked
+
+      - name: Assemble LKM bootstrap object
+        shell: bash
+        run: |
+          set -euo pipefail
+          clang --target=aarch64-linux-gnu -c -nostdlib \
+            -o resukisu/userspace/ksud/.lkm_image_bootstrap.o \
+            resukisu/userspace/ksud/src/lkm_image_bootstrap.S
+
+      - name: Build ARM64 ksud only
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd resukisu/userspace/ksud
+          cargo ndk b -t arm64-v8a -r \
+            -Z build-std=std,core,panic_abort \
+            -Z build-std-features=optimize_for_size \
+            -Z trim-paths
+
+      - name: Verify built binary contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=resukisu/userspace/ksud/target/aarch64-linux-android/release/ksud
+          test -x "$BIN"
+          test "$(stat -c '%s' "$BIN")" -gt 1000000
+          file "$BIN" | grep -q 'ELF 64-bit LSB.*ARM aarch64'
+          readelf -h "$BIN" | grep -q 'Machine:.*AArch64'
+          strings -a "$BIN" > /tmp/ksud.strings
+          grep -Fq 'add_sus_map' /tmp/ksud.strings
+          grep -Fq 'enabled_features' /tmp/ksud.strings
+          grep -Fq 'Manage the persisted SUSFS configuration' /tmp/ksud.strings
+          ! grep -Fq '4.1.0-1288-g54e7551e' /tmp/ksud.strings
+          sha256sum "$BIN" | tee ksud.sha256
+          stat -c '%n %s bytes' "$BIN"
+
+      - name: Upload verified ksud
+        uses: actions/upload-artifact@v4
+        with:
+          name: resukisu-ksud-arm64-${{ env.RESUKISU_COMMIT }}
+          path: |
+            resukisu/userspace/ksud/target/aarch64-linux-android/release/ksud
+            ksud.sha256
+          if-no-files-found: error
+          retention-days: 7
