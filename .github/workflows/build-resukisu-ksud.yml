@@ -72,13 +72,13 @@ jobs:
         shell: bash
         run: cargo install cargo-ndk --locked
 
-      - name: Assemble LKM bootstrap object
+      - name: Verify exact upstream build recipe needs no LKM bootstrap object
         shell: bash
         run: |
           set -euo pipefail
-          clang --target=aarch64-linux-gnu -c -nostdlib \
-            -o resukisu/userspace/ksud/.lkm_image_bootstrap.o \
-            resukisu/userspace/ksud/src/lkm_image_bootstrap.S
+          test ! -e resukisu/userspace/ksud/src/lkm_image_bootstrap.S
+          ! grep -Eq 'lkm_image_bootstrap|BOOTSTRAP_OBJECT' resukisu/userspace/ksud/build.rs
+          git -C resukisu show "$SUSMAP_UPSTREAM":.github/workflows/ksud.yml | grep -Fq 'cargo ndk b -t ${{ inputs.target }} -r -Z build-std=std,core,panic_abort'
 
       - name: Build ARM64 ksud only
         shell: bash
