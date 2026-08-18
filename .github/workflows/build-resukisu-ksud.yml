@@ -1,4 +1,4 @@
-name: Build pinned ReSukiSU ksud
+name: Build ABI-35002 SUS_MAP ReSukiSU ksud
 
 on:
   workflow_dispatch:
@@ -8,7 +8,8 @@ permissions:
   contents: read
 
 env:
-  RESUKISU_COMMIT: 829f61fb008c895841b98aca5833c18daae6f145
+  RESUKISU_BASE: 54e7551e01bb131403aa8e600147fee40b2ee000
+  SUSMAP_UPSTREAM: 97163bdc8ad2ee59b523e9e34edeb4c286eceb04
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -19,27 +20,47 @@ jobs:
       - name: Checkout pipeline
         uses: actions/checkout@v4
 
-      - name: Checkout exact ReSukiSU source
+      - name: Checkout full ReSukiSU history at official ABI 35002 base
         shell: bash
         run: |
           set -euo pipefail
-          git clone --filter=blob:none --no-checkout https://github.com/ReSukiSU/ReSukiSU.git resukisu
-          git -C resukisu fetch --depth=1 origin "$RESUKISU_COMMIT"
-          git -C resukisu checkout --detach "$RESUKISU_COMMIT"
-          test "$(git -C resukisu rev-parse HEAD)" = "$RESUKISU_COMMIT"
+          git clone https://github.com/ReSukiSU/ReSukiSU.git resukisu
+          git -C resukisu checkout --detach "$RESUKISU_BASE"
+          test "$(git -C resukisu rev-parse HEAD)" = "$RESUKISU_BASE"
+          test "$(git -C resukisu rev-list --count HEAD)" = 4302
+          test "$(git -C resukisu describe --tags --always HEAD)" = v4.1.0-1288-g54e7551e
+          git -C resukisu merge-base --is-ancestor "$RESUKISU_BASE" "$SUSMAP_UPSTREAM"
 
-      - name: Verify SUS_MAP userspace ABI and CLI source
+      - name: Apply exact upstream SUS_MAP userspace backport
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C resukisu diff --binary "$RESUKISU_BASE" "$SUSMAP_UPSTREAM" -- userspace/ksud > /tmp/susmap-userspace.patch
+          test -s /tmp/susmap-userspace.patch
+          git -C resukisu apply --check /tmp/susmap-userspace.patch
+          git -C resukisu apply /tmp/susmap-userspace.patch
+          test "$(git -C resukisu rev-parse HEAD)" = "$RESUKISU_BASE"
+          test "$(git -C resukisu rev-list --count HEAD)" = 4302
+          test -z "$(git -C resukisu status --porcelain | grep -v '^.. userspace/ksud/' || true)"
+
+      - name: Verify backported SUS_MAP ABI, CLI, and source digests
         shell: bash
         run: |
           set -euo pipefail
           MAGIC=resukisu/userspace/ksud/src/android/susfs/api/magic.rs
           CLI=resukisu/userspace/ksud/src/android/susfs/cli.rs
           API=resukisu/userspace/ksud/src/android/susfs/api/features/sus_map.rs
+          echo 'ab496910d938e2a993a4be6d74a64eadfb626778460c51763430fc0e8dbb948f  '"$MAGIC" | sha256sum -c -
+          echo '088f230795a85329f7b865df6c995d172c9ffdfaa93c92495274af2d64ed98f7  '"$CLI" | sha256sum -c -
+          echo '49938ef2881fd4da46682cacb615135ca3b3652bf824bb0c1d35a123b373dee2  '"$API" | sha256sum -c -
           grep -Eq 'CMD_SUSFS_ADD_SUS_MAP[^=]*=[[:space:]]*0x60020' "$MAGIC"
           grep -Fq '#[command(name = "add_sus_map")]' "$CLI"
           grep -Fq 'api::add_sus_map(&path)?' "$CLI"
-          grep -Fq 'susfsctl(CMD_SUSFS_ADD_SUS_MAP, &mut info)' "$API"
+          grep -Fq 'communicate(CMD_SUSFS_ADD_SUS_MAP, &mut info)' "$API"
           grep -Fq 'target_pathname: [u8; SUSFS_MAX_LEN_PATHNAME]' "$API"
+          grep -Fq 'err: i32' "$API"
+          grep -Fq 'std::fs::hard_link("/data/adb/ksud", ksu_susfs)' resukisu/userspace/ksud/src/assets.rs
+          grep -Fq 'std::fs::remove_file(defs::DAEMON_PATH)' resukisu/userspace/ksud/src/android/utils.rs
 
       - name: Setup Rust nightly
         uses: dtolnay/rust-toolchain@nightly
@@ -69,7 +90,7 @@ jobs:
             -Z build-std-features=optimize_for_size \
             -Z trim-paths
 
-      - name: Verify built binary contract
+      - name: Verify built binary and ABI 35002 contract
         shell: bash
         run: |
           set -euo pipefail
@@ -78,18 +99,27 @@ jobs:
           test "$(stat -c '%s' "$BIN")" -gt 1000000
           file "$BIN" | grep -q 'ELF 64-bit LSB.*ARM aarch64'
           readelf -h "$BIN" | grep -q 'Machine:.*AArch64'
+          readelf -l "$BIN" | grep -q '/system/bin/linker64'
+          mapfile -t VERSION_CODE_FILES < <(find resukisu/userspace/ksud/target -type f -name VERSION_CODE)
+          mapfile -t VERSION_NAME_FILES < <(find resukisu/userspace/ksud/target -type f -name VERSION_NAME)
+          test "${#VERSION_CODE_FILES[@]}" -ge 1
+          test "${#VERSION_NAME_FILES[@]}" -ge 1
+          for f in "${VERSION_CODE_FILES[@]}"; do test "$(cat "$f")" = 35002; done
+          for f in "${VERSION_NAME_FILES[@]}"; do test "$(cat "$f")" = 4.1.0-1288-g54e7551e; done
           strings -a "$BIN" > /tmp/ksud.strings
           grep -Fq 'add_sus_map' /tmp/ksud.strings
           grep -Fq 'enabled_features' /tmp/ksud.strings
           grep -Fq 'Manage the persisted SUSFS configuration' /tmp/ksud.strings
-          ! grep -Fq '4.1.0-1288-g54e7551e' /tmp/ksud.strings
+          grep -Fq '4.1.0-1288-g54e7551e (uapi: 2)' /tmp/ksud.strings
+          grep -aob '35002' "$BIN" >/dev/null
+          ! grep -aob '30701' "$BIN" >/dev/null
           sha256sum "$BIN" | tee ksud.sha256
           stat -c '%n %s bytes' "$BIN"
 
-      - name: Upload verified ksud
+      - name: Upload verified ABI-35002 SUS_MAP ksud
         uses: actions/upload-artifact@v4
         with:
-          name: resukisu-ksud-arm64-${{ env.RESUKISU_COMMIT }}
+          name: resukisu-ksud-abi35002-susmap-arm64
           path: |
             resukisu/userspace/ksud/target/aarch64-linux-android/release/ksud
             ksud.sha256
