@@ -122,9 +122,16 @@ jobs:
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
           export NEEDRESTART_MODE=a
-          sudo -n apt purge -y -o DPkg::Lock::Timeout=60 man-db /var/lib/man-db/auto-update || true
-          timeout 180s sudo -n apt-get update -qq
-          timeout 180s sudo -n apt-get install -y -o DPkg::Lock::Timeout=60 \
+          # Hosted-runner mirrors can occasionally take more than three minutes.
+          # Do not purge filesystem paths as package names; install only the
+          # build dependencies with apt's own retry/lock handling.
+          timeout 600s sudo -n apt-get update -qq \
+            -o Acquire::Retries=5 \
+            -o Acquire::http::Timeout=60 \
+            -o Acquire::https::Timeout=60
+          timeout 600s sudo -n apt-get install -y \
+            -o DPkg::Lock::Timeout=120 \
+            -o Acquire::Retries=5 \
             build-essential bc libncurses5-dev libssl-dev bison flex libelf-dev \
             zip unzip git ccache curl aria2 jq
           echo '✅ Build dependencies installed'
