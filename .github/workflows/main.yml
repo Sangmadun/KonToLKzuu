@@ -12,6 +12,7 @@ on:
           - 'both'
           - 'kernel_only'
           - 'manager_only'
+          - 'userspace_only'
       ksu_fork:
         description: 'Select KernelSU Fork'
         required: true
@@ -110,6 +111,7 @@ jobs:
   # JOB 1: AUTOMATICALLY CALL WORKER KERNEL & MANAGER
   # -------------------------------------------------------------------------
   build-kernel-and-manager:
+    if: inputs.build_target != 'userspace_only'
     uses: ./.github/workflows/build-kernel.yml
     with:
       build_target: ${{ inputs.build_target }}
@@ -132,10 +134,16 @@ jobs:
   # -------------------------------------------------------------------------
   build-lpud-binary:
     needs: build-kernel-and-manager
-    if: inputs.include_lpud == true && (inputs.ksu_fork == 'xxKSU' || inputs.ksu_fork == 'SUKISU')
+    if: inputs.build_target != 'userspace_only' && inputs.include_lpud == true && (inputs.ksu_fork == 'xxKSU' || inputs.ksu_fork == 'SUKISU')
     uses: ./.github/workflows/build-lpud.yml
     with:
       ksu_fork: ${{ inputs.ksu_fork }}
       target_arch: 'aarch64-linux-android'
     secrets: inherit
+
+  # Build only the exact pinned SUS_MAP-capable ReSukiSU daemon. This path
+  # cannot invoke the kernel, manager, or LPUD reusable workflows.
+  build-resukisu-userspace:
+    if: inputs.build_target == 'userspace_only'
+    uses: ./.github/workflows/build-resukisu-ksud.yml
     
