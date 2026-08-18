@@ -6,8 +6,10 @@ KSUD="$BASE/ksud"
 ADBROOT="$BASE/libadbroot.so"
 META_ZIP="$BASE/meta-overlayfs-13100-1.3.1.zip"
 MARKER="$BASE/.meta-overlayfs-installed"
+KSUD_MARKER="$BASE/.ksud-susmap-installed"
 
 [ -x "$KSUD" ] || exit 0
+[ -s "$KSUD_MARKER" ] || exit 0
 [ -f "$MARKER" ] && exit 0
 
 # Never reinstall or overwrite an already healthy metamodule.

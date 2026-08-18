@@ -445,9 +445,11 @@ jobs:
           ZIP=$(find . -maxdepth 1 -type f -name '*.zip' | head -n 1)
           [ -n "$ZIP" ] || { echo "::error::kernel ZIP missing"; exit 1; }
           unzip -t "$ZIP" >/dev/null
-          unzip -l "$ZIP" | grep -q 'resukisu-bootstrap/ksud' || {
-            echo "::error::official ksud bootstrap missing from ZIP"; exit 1;
-          }
+          for item in resukisu-bootstrap/ksud resukisu-bootstrap/ksud.susmap resukisu-bootstrap/ksud.sha256; do
+            unzip -l "$ZIP" | grep -q "$item" || {
+              echo "::error::ReSukiSU bootstrap payload missing: $item"; exit 1;
+            }
+          done
           unzip -l "$ZIP" | grep -q 'resukisu-bootstrap/libadbroot.so' || {
             echo "::error::libadbroot bootstrap missing from ZIP"; exit 1;
           }
@@ -457,17 +459,25 @@ jobs:
             }
           done
           mkdir -p /tmp/resukisu-bootstrap-audit
-          unzip -p "$ZIP" resukisu-bootstrap/ksud > /tmp/resukisu-bootstrap-audit/ksud
+          unzip -p "$ZIP" resukisu-bootstrap/ksud > /tmp/resukisu-bootstrap-audit/launcher
+          unzip -p "$ZIP" resukisu-bootstrap/ksud.susmap > /tmp/resukisu-bootstrap-audit/ksud
+          unzip -p "$ZIP" resukisu-bootstrap/ksud.sha256 > /tmp/resukisu-bootstrap-audit/ksud.sha256
           unzip -p "$ZIP" resukisu-bootstrap/libadbroot.so > /tmp/resukisu-bootstrap-audit/libadbroot.so
           unzip -p "$ZIP" resukisu-bootstrap/meta-overlayfs-13100-1.3.1.zip > /tmp/resukisu-bootstrap-audit/meta-overlayfs.zip
           unzip -p "$ZIP" resukisu-bootstrap/bootstrap-meta.sh > /tmp/resukisu-bootstrap-audit/bootstrap-meta.sh
+          bash -n /tmp/resukisu-bootstrap-audit/launcher
+          grep -Fq 'REAL="$BASE/ksud.susmap"' /tmp/resukisu-bootstrap-audit/launcher
+          grep -Fq 'EXPECTED_SHA256_FILE="$BASE/ksud.sha256"' /tmp/resukisu-bootstrap-audit/launcher
           test "$(stat -c '%s' /tmp/resukisu-bootstrap-audit/ksud)" -gt 1000000
           test "$(stat -c '%s' /tmp/resukisu-bootstrap-audit/libadbroot.so)" -gt 1000
           unzip -t /tmp/resukisu-bootstrap-audit/meta-overlayfs.zip >/dev/null
           unzip -p /tmp/resukisu-bootstrap-audit/meta-overlayfs.zip module.prop | grep -q '^metamodule=1$'
           bash -n /tmp/resukisu-bootstrap-audit/bootstrap-meta.sh
+          grep -Fq 'KSUD_MARKER="$BASE/.ksud-susmap-installed"' /tmp/resukisu-bootstrap-audit/bootstrap-meta.sh
+          grep -Fq '[ -s "$KSUD_MARKER" ] || exit 0' /tmp/resukisu-bootstrap-audit/bootstrap-meta.sh
           file /tmp/resukisu-bootstrap-audit/ksud /tmp/resukisu-bootstrap-audit/libadbroot.so
           test "$(sha256sum /tmp/resukisu-bootstrap-audit/ksud | awk '{print $1}')" = c70756391ff6994ccc7b8d85ac43459cf9d087f90d22c52c50bfa3c2be3b2a3a
+          test "$(awk 'NR==1 {print $1}' /tmp/resukisu-bootstrap-audit/ksud.sha256)" = c70756391ff6994ccc7b8d85ac43459cf9d087f90d22c52c50bfa3c2be3b2a3a
           strings -a /tmp/resukisu-bootstrap-audit/ksud > /tmp/resukisu-bootstrap-audit/ksud.strings
           grep -Fq '4.2.0-rc1-18-gcdce8bb8 (uapi: 2)' /tmp/resukisu-bootstrap-audit/ksud.strings
           grep -Fq 'add_sus_map' /tmp/resukisu-bootstrap-audit/ksud.strings
