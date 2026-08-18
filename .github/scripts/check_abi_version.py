@@ -7,8 +7,9 @@ import sys
 import zlib
 from pathlib import Path
 
-MARKER = b"ReSukiSU-KERNEL-ABI-35002"
-LEGACY = b"11872"
+ABI = b"35079"
+MARKER = b"ReSukiSU-KERNEL-ABI-" + ABI
+STALE = (b"ReSukiSU-KERNEL-ABI-35002", b"11872")
 
 def image_payload(path: Path) -> bytes:
     raw = path.read_bytes()
@@ -22,9 +23,10 @@ def image_payload(path: Path) -> bytes:
 def check(path: Path, data: bytes) -> None:
     if MARKER not in data:
         raise SystemExit(f"ABI marker missing from {path}")
-    if LEGACY in data:
-        raise SystemExit(f"legacy ABI 11872 found in {path}")
-    print(f"ABI 35002 verified in {path} ({len(data)} bytes, sha256={hashlib.sha256(data).hexdigest()})")
+    for stale in STALE:
+        if stale in data:
+            raise SystemExit(f"stale ABI marker {stale.decode()} found in {path}")
+    print(f"ABI {ABI.decode()} verified in {path} ({len(data)} bytes, sha256={hashlib.sha256(data).hexdigest()})")
 
 if len(sys.argv) != 3:
     raise SystemExit("usage: check_abi_version.py VMLINUX IMAGE_GZ_DTB")

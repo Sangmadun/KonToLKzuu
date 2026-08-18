@@ -297,7 +297,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APK="$GITHUB_WORKSPACE/output_apk/ReSuKISU_v4.1.0_35002-arm64-v8a-official.apk"
+          APK="$GITHUB_WORKSPACE/output_apk/ReSukiSU_v4.2.0-rc1_35079-arm64-v8a-official.apk"
           SRC="$GITHUB_WORKSPACE/kernel-source"
           SIGN_H="$SRC/drivers/kernelsu/manager/manager_sign.h"
           SIGN_C="$SRC/drivers/kernelsu/manager/apk_sign.c"
@@ -360,7 +360,7 @@ jobs:
           done
           grep -q '^CONFIG_KSU_SUSFS=y$' "$DC" || { echo "::error::SUSFS inline hook config is not enabled"; exit 1; }
           ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' "$DC" || { echo "::error::manual hook remains enabled"; exit 1; }
-          # Official Manager 35002 requires the matching ABI embedded in the image.
+          # Official ReSukiSU Manager 4.2 build 35079 requires matching ABI.
           python3 "$GITHUB_WORKSPACE/.github/scripts/check_abi_version.py" "$SRC/out/vmlinux" "$IMG"
           ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' "$DC" || { echo "::error::tracepoint hook must be disabled"; exit 1; }
           ! grep -q '^CONFIG_KPROBES=y$' "$DC" || { echo "::error::Kprobes runtime must be disabled for pure inline mode"; exit 1; }
@@ -415,7 +415,9 @@ jobs:
           echo "✅ SUS_MAP source + command ABI + procfs interfaces are fail-closed"
           grep -q 'SUSFS_VERSION.*2\.2\.0' "$SRC/include/linux/susfs.h" || { echo "::error::SUSFS 2.2.0 header not found"; exit 1; }
           grep -q 'EXPECTED_HASH_RESUKISU' "$SRC/drivers/kernelsu/manager/manager_sign.h" || { echo "::error::ReSukiSU signature table missing"; exit 1; }
-          read -r OFFICIAL_SIZE OFFICIAL_HASH < <(python3 "$GITHUB_WORKSPACE/.github/scripts/extract_apk_v2_cert.py" "$GITHUB_WORKSPACE/output_apk/ReSuKISU_v4.1.0_35002-arm64-v8a-official.apk")
+          OFFICIAL_APK="$GITHUB_WORKSPACE/output_apk/ReSukiSU_v4.2.0-rc1_35079-arm64-v8a-official.apk"
+          test "$(sha256sum "$OFFICIAL_APK" | awk '{print $1}')" = 1304702a9aac86d6354ace9798eec0b1efb1b50ed6a1a8309e54680b39be0d6b
+          read -r OFFICIAL_SIZE OFFICIAL_HASH < <(python3 "$GITHUB_WORKSPACE/.github/scripts/extract_apk_v2_cert.py" "$OFFICIAL_APK")
           test "$OFFICIAL_SIZE" = 887
           test "$OFFICIAL_HASH" = d3469712b6214462764a1d8d3e5cbe1d6819a0b629791b9f4101867821f1df64
           grep -q "$OFFICIAL_HASH" "$SRC/drivers/kernelsu/manager/manager_sign.h" || { echo "::error::official Manager hash missing from manager_sign.h"; exit 1; }
@@ -465,8 +467,13 @@ jobs:
           unzip -p /tmp/resukisu-bootstrap-audit/meta-overlayfs.zip module.prop | grep -q '^metamodule=1$'
           bash -n /tmp/resukisu-bootstrap-audit/bootstrap-meta.sh
           file /tmp/resukisu-bootstrap-audit/ksud /tmp/resukisu-bootstrap-audit/libadbroot.so
+          test "$(sha256sum /tmp/resukisu-bootstrap-audit/ksud | awk '{print $1}')" = c70756391ff6994ccc7b8d85ac43459cf9d087f90d22c52c50bfa3c2be3b2a3a
+          strings -a /tmp/resukisu-bootstrap-audit/ksud > /tmp/resukisu-bootstrap-audit/ksud.strings
+          grep -Fq '4.2.0-rc1-18-gcdce8bb8 (uapi: 2)' /tmp/resukisu-bootstrap-audit/ksud.strings
+          grep -Fq 'add_sus_map' /tmp/resukisu-bootstrap-audit/ksud.strings
+          grep -aob '35079' /tmp/resukisu-bootstrap-audit/ksud >/dev/null
           sha256sum /tmp/resukisu-bootstrap-audit/ksud /tmp/resukisu-bootstrap-audit/libadbroot.so /tmp/resukisu-bootstrap-audit/meta-overlayfs.zip
-          echo "✅ ReSukiSU + bundled meta-overlayfs payload verified"
+          echo "✅ official ReSukiSU 4.2/35079 + bundled meta-overlayfs payload verified"
 
       - name: Debug Workspace Files
         run: |

@@ -1,4 +1,4 @@
-name: Build ABI-35002 SUS_MAP ReSukiSU ksud
+name: Acquire Official ReSukiSU 35079 SUS_MAP Userspace
 
 on:
   workflow_dispatch:
@@ -8,122 +8,62 @@ permissions:
   contents: read
 
 env:
-  RESUKISU_BASE: 54e7551e01bb131403aa8e600147fee40b2ee000
-  SUSMAP_UPSTREAM: 97163bdc8ad2ee59b523e9e34edeb4c286eceb04
-  CARGO_TERM_COLOR: always
+  RESUKISU_COMMIT: cdce8bb8c8bf2167d21751e39ca6cdc4ad154678
+  RESUKISU_VERSION: "35079"
+  RESUKISU_REV_COUNT: "4379"
+  OFFICIAL_APK_URL: https://github.com/Sangmadun/KonToLKzuu/releases/download/resukisu-35079-official/ReSukiSU_v4.2.0-rc1_35079-arm64-v8a-release.apk
+  OFFICIAL_APK_SHA256: 1304702a9aac86d6354ace9798eec0b1efb1b50ed6a1a8309e54680b39be0d6b
+  OFFICIAL_KSUD_SHA256: c70756391ff6994ccc7b8d85ac43459cf9d087f90d22c52c50bfa3c2be3b2a3a
 
 jobs:
-  build-ksud:
+  acquire-userspace:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - name: Checkout pipeline
         uses: actions/checkout@v4
 
-      - name: Checkout full ReSukiSU history at official ABI 35002 base
+      - name: Verify official full-history 35079 source contract
         shell: bash
         run: |
           set -euo pipefail
-          git clone https://github.com/ReSukiSU/ReSukiSU.git resukisu
-          git -C resukisu checkout --detach "$RESUKISU_BASE"
-          test "$(git -C resukisu rev-parse HEAD)" = "$RESUKISU_BASE"
-          test "$(git -C resukisu rev-list --count HEAD)" = 4302
-          test "$(git -C resukisu describe --tags --always HEAD)" = v4.1.0-1288-g54e7551e
-          git -C resukisu merge-base --is-ancestor "$RESUKISU_BASE" "$SUSMAP_UPSTREAM"
+          git clone --filter=blob:none https://github.com/ReSukiSU/ReSukiSU.git resukisu
+          git -C resukisu checkout --detach "$RESUKISU_COMMIT"
+          test "$(git -C resukisu rev-parse --is-shallow-repository)" = false
+          test "$(git -C resukisu rev-parse HEAD)" = "$RESUKISU_COMMIT"
+          test "$(git -C resukisu rev-list --count HEAD)" = "$RESUKISU_REV_COUNT"
+          test "$((30000 + RESUKISU_REV_COUNT + 700))" = "$RESUKISU_VERSION"
+          grep -Fq 'CMD_SUSFS_ADD_SUS_MAP' resukisu/userspace/ksud/src/android/susfs/api/features/sus_map.rs
+          grep -Fq 'add_sus_map' resukisu/userspace/ksud/src/android/susfs/cli.rs
+          grep -Fq 'KERNEL_SU_UAPI_VERSION = 2' resukisu/uapi/supercall.h
 
-      - name: Apply exact upstream SUS_MAP userspace backport
+      - name: Acquire byte-identical official Manager and embedded ksud
         shell: bash
         run: |
           set -euo pipefail
-          git -C resukisu diff --binary "$RESUKISU_BASE" "$SUSMAP_UPSTREAM" -- userspace/ksud > /tmp/susmap-userspace.patch
-          test -s /tmp/susmap-userspace.patch
-          git -C resukisu apply --check /tmp/susmap-userspace.patch
-          git -C resukisu apply /tmp/susmap-userspace.patch
-          test "$(git -C resukisu rev-parse HEAD)" = "$RESUKISU_BASE"
-          test "$(git -C resukisu rev-list --count HEAD)" = 4302
-          test -z "$(git -C resukisu status --porcelain | grep -v '^.. userspace/ksud/' || true)"
+          curl --fail --location --retry 3 --connect-timeout 15 --max-time 180 \
+            "$OFFICIAL_APK_URL" -o ReSukiSU-35079-official.apk
+          echo "$OFFICIAL_APK_SHA256  ReSukiSU-35079-official.apk" | sha256sum -c -
+          unzip -p ReSukiSU-35079-official.apk lib/arm64-v8a/libksud.so > ksud
+          chmod 0755 ksud
+          echo "$OFFICIAL_KSUD_SHA256  ksud" | sha256sum -c -
+          file ksud | grep -q 'ELF 64-bit LSB.*ARM aarch64'
+          readelf -h ksud | grep -q 'Machine:.*AArch64'
+          readelf -l ksud | grep -q '/system/bin/linker64'
+          strings -a ksud > ksud.strings
+          grep -Fq '4.2.0-rc1-18-gcdce8bb8 (uapi: 2)' ksud.strings
+          grep -Fq 'add_sus_map' ksud.strings
+          grep -Fq 'enabled_features' ksud.strings
+          grep -aob '35079' ksud >/dev/null
+          sha256sum ksud > ksud.sha256
 
-      - name: Verify backported SUS_MAP ABI, CLI, and source digests
-        shell: bash
-        run: |
-          set -euo pipefail
-          MAGIC=resukisu/userspace/ksud/src/android/susfs/api/magic.rs
-          CLI=resukisu/userspace/ksud/src/android/susfs/cli.rs
-          API=resukisu/userspace/ksud/src/android/susfs/api/features/sus_map.rs
-          echo 'ab496910d938e2a993a4be6d74a64eadfb626778460c51763430fc0e8dbb948f  '"$MAGIC" | sha256sum -c -
-          echo '088f230795a85329f7b865df6c995d172c9ffdfaa93c92495274af2d64ed98f7  '"$CLI" | sha256sum -c -
-          echo '49938ef2881fd4da46682cacb615135ca3b3652bf824bb0c1d35a123b373dee2  '"$API" | sha256sum -c -
-          grep -Eq 'CMD_SUSFS_ADD_SUS_MAP[^=]*=[[:space:]]*0x60020' "$MAGIC"
-          grep -Fq '#[command(name = "add_sus_map")]' "$CLI"
-          grep -Fq 'api::add_sus_map(&path)?' "$CLI"
-          grep -Fq 'communicate(CMD_SUSFS_ADD_SUS_MAP, &mut info)' "$API"
-          grep -Fq 'target_pathname: [u8; SUSFS_MAX_LEN_PATHNAME]' "$API"
-          grep -Fq 'err: i32' "$API"
-          grep -Fq 'std::fs::hard_link("/data/adb/ksud", ksu_susfs)' resukisu/userspace/ksud/src/assets.rs
-          grep -Fq 'std::fs::remove_file(defs::DAEMON_PATH)' resukisu/userspace/ksud/src/android/utils.rs
-
-      - name: Setup Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: aarch64-linux-android
-          components: rust-src
-
-      - name: Install cargo-ndk
-        shell: bash
-        run: cargo install cargo-ndk --locked
-
-      - name: Verify exact upstream build recipe needs no LKM bootstrap object
-        shell: bash
-        run: |
-          set -euo pipefail
-          test ! -e resukisu/userspace/ksud/src/lkm_image_bootstrap.S
-          ! grep -Eq 'lkm_image_bootstrap|BOOTSTRAP_OBJECT' resukisu/userspace/ksud/build.rs
-          git -C resukisu show "$SUSMAP_UPSTREAM":.github/workflows/ksud.yml > /tmp/upstream-ksud-workflow.yml
-          grep -Fq 'cargo ndk b -t ' /tmp/upstream-ksud-workflow.yml
-          grep -Fq -- '-r -Z build-std=std,core,panic_abort' /tmp/upstream-ksud-workflow.yml
-
-      - name: Build ARM64 ksud only
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd resukisu/userspace/ksud
-          cargo ndk b -t arm64-v8a -r \
-            -Z build-std=std,core,panic_abort \
-            -Z build-std-features=optimize_for_size \
-            -Z trim-paths
-
-      - name: Verify built binary and ABI 35002 contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          BIN=resukisu/userspace/ksud/target/aarch64-linux-android/release/ksud
-          test -x "$BIN"
-          test "$(stat -c '%s' "$BIN")" -gt 1000000
-          file "$BIN" | grep -q 'ELF 64-bit LSB.*ARM aarch64'
-          readelf -h "$BIN" | grep -q 'Machine:.*AArch64'
-          readelf -l "$BIN" | grep -q '/system/bin/linker64'
-          mapfile -t VERSION_CODE_FILES < <(find resukisu/userspace/ksud/target -type f -name VERSION_CODE)
-          mapfile -t VERSION_NAME_FILES < <(find resukisu/userspace/ksud/target -type f -name VERSION_NAME)
-          test "${#VERSION_CODE_FILES[@]}" -ge 1
-          test "${#VERSION_NAME_FILES[@]}" -ge 1
-          for f in "${VERSION_CODE_FILES[@]}"; do test "$(cat "$f")" = 35002; done
-          for f in "${VERSION_NAME_FILES[@]}"; do test "$(cat "$f")" = 4.1.0-1288-g54e7551e; done
-          strings -a "$BIN" > /tmp/ksud.strings
-          grep -Fq 'add_sus_map' /tmp/ksud.strings
-          grep -Fq 'enabled_features' /tmp/ksud.strings
-          grep -Fq 'Manage the persisted SUSFS configuration' /tmp/ksud.strings
-          grep -Fq '4.1.0-1288-g54e7551e (uapi: 2)' /tmp/ksud.strings
-          grep -aob '35002' "$BIN" >/dev/null
-          ! grep -aob '30701' "$BIN" >/dev/null
-          sha256sum "$BIN" | tee ksud.sha256
-          stat -c '%n %s bytes' "$BIN"
-
-      - name: Upload verified ABI-35002 SUS_MAP ksud
+      - name: Upload verified official ReSukiSU 35079 userspace
         uses: actions/upload-artifact@v4
         with:
-          name: resukisu-ksud-abi35002-susmap-arm64
+          name: resukisu-ksud-official-35079-susmap-arm64
           path: |
-            resukisu/userspace/ksud/target/aarch64-linux-android/release/ksud
+            ksud
             ksud.sha256
+            ReSukiSU-35079-official.apk
           if-no-files-found: error
           retention-days: 7

@@ -28,7 +28,9 @@ runs:
           "ReSuKISU"|"ReSukiSU")
             REPO="https://github.com/ReSukiSU/ReSukiSU.git"
             BRANCH="main"
-            PINNED_COMMIT="829f61fb008c895841b98aca5833c18daae6f145"
+            PINNED_COMMIT="cdce8bb8c8bf2167d21751e39ca6cdc4ad154678"
+            KSU_EXPECTED_REV_COUNT=4379
+            KSU_EXPECTED_VERSION=35079
             ;;
           "KSU-Next")
             REPO="https://github.com/KernelSU-Next/KernelSU-Next.git"
@@ -49,11 +51,17 @@ runs:
           git clone --depth=1 "$REPO" KernelSU_temp
         fi
         if [ -n "${PINNED_COMMIT:-}" ]; then
-          git -C KernelSU_temp fetch --depth=1 origin "$PINNED_COMMIT"
+          # ReSukiSU derives KSU_VERSION from the complete Git revision count.
+          # Restore the full official history before checking out ABI 35079.
+          git -C KernelSU_temp fetch --unshallow origin "$BRANCH"
+          git -C KernelSU_temp fetch origin "$PINNED_COMMIT"
           git -C KernelSU_temp checkout --detach "$PINNED_COMMIT"
           test "$(git -C KernelSU_temp rev-parse HEAD)" = "$PINNED_COMMIT" || {
             echo "::error::KSU source commit pin mismatch"; exit 1;
           }
+          test "$(git -C KernelSU_temp rev-parse --is-shallow-repository)" = false
+          test "$(git -C KernelSU_temp rev-list --count HEAD)" = "$KSU_EXPECTED_REV_COUNT"
+          test "$((30000 + KSU_EXPECTED_REV_COUNT + 700))" = "$KSU_EXPECTED_VERSION"
         fi
 
         mkdir -p drivers/kernelsu
@@ -88,9 +96,9 @@ runs:
           cp -rf "$ufolder"/* include/uapi/ 2>/dev/null || true
         done
 
-        # Pair the built-in kernel ABI with the official ReSukiSU Manager 35002.
+        # Pair the built-in kernel ABI with official ReSukiSU 4.2 build 35079.
         # Never inject the archived legacy 11872 ABI into a modern manager build.
-        KSU_ABI_VERSION=35002
+        KSU_ABI_VERSION=35079
         if [ -f "drivers/kernelsu/Kbuild" ]; then
           sed -i '/-DKERNEL_SU_VERSION=/d' drivers/kernelsu/Kbuild
           sed -i "1iccflags-y += -I\$(srctree)/drivers/kernelsu -I\$(srctree)/drivers/kernelsu/include -DKERNEL_SU_VERSION=$KSU_ABI_VERSION" drivers/kernelsu/Kbuild
@@ -126,10 +134,10 @@ runs:
         # Embed an ASCII ABI marker in the built-in KSU core. The dispatch object
         # is not guaranteed to be linked on every legacy config; core/init.c is.
         CORE_INIT="drivers/kernelsu/core/init.c"
-        if [ -f "$CORE_INIT" ] && ! grep -q 'resukisu_kernel_abi_35002' "$CORE_INIT"; then
-          sed -i '1i__attribute__((used, section(".rodata"))) static const char resukisu_kernel_abi_35002[] = "ReSukiSU-KERNEL-ABI-35002";' "$CORE_INIT"
+        if [ -f "$CORE_INIT" ] && ! grep -q 'resukisu_kernel_abi_35079' "$CORE_INIT"; then
+          sed -i '1i__attribute__((used, section(".rodata"))) static const char resukisu_kernel_abi_35079[] = "ReSukiSU-KERNEL-ABI-35079";' "$CORE_INIT"
         fi
-        grep -q 'ReSukiSU-KERNEL-ABI-35002' "$CORE_INIT"
+        grep -q 'ReSukiSU-KERNEL-ABI-35079' "$CORE_INIT"
 
         # Injeksi ksu_cred secara presisi
         echo "🔧 Injecting extern ksu_cred declaration safely into KernelSU C files..."
@@ -198,7 +206,7 @@ runs:
         DISPATCH_FILE="drivers/kernelsu/supercall/dispatch.c"
         if [ -f "$DISPATCH_FILE" ]; then
           echo "🔒 Using the canonical SUSFS 2.2.0 command ABI..."
-          sed -i '1i__attribute__((used, section(".rodata"))) static const unsigned int resukisu_kernel_abi_version = 35002;\n#include <linux/types.h>\n#include <linux/susfs_def.h>\n#ifndef KERNEL_SU_VERSION\n#define KERNEL_SU_VERSION 35002\n#endif\nextern bool ksu_late_loaded;' "$DISPATCH_FILE"
+          sed -i '1i__attribute__((used, section(".rodata"))) static const unsigned int resukisu_kernel_abi_version = 35079;\n#include <linux/types.h>\n#include <linux/susfs_def.h>\n#ifndef KERNEL_SU_VERSION\n#define KERNEL_SU_VERSION 35079\n#endif\nextern bool ksu_late_loaded;' "$DISPATCH_FILE"
         fi
         rm -f drivers/kernelsu/include/linux/susfs_def.h
 
