@@ -78,7 +78,9 @@ jobs:
           set -euo pipefail
           test ! -e resukisu/userspace/ksud/src/lkm_image_bootstrap.S
           ! grep -Eq 'lkm_image_bootstrap|BOOTSTRAP_OBJECT' resukisu/userspace/ksud/build.rs
-          git -C resukisu show "$SUSMAP_UPSTREAM":.github/workflows/ksud.yml | grep -Fq 'cargo ndk b -t ${{ inputs.target }} -r -Z build-std=std,core,panic_abort'
+          git -C resukisu show "$SUSMAP_UPSTREAM":.github/workflows/ksud.yml > /tmp/upstream-ksud-workflow.yml
+          grep -Fq 'cargo ndk b -t ' /tmp/upstream-ksud-workflow.yml
+          grep -Fq -- '-r -Z build-std=std,core,panic_abort' /tmp/upstream-ksud-workflow.yml
 
       - name: Build ARM64 ksud only
         shell: bash
