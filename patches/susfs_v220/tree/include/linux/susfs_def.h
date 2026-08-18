@@ -97,10 +97,24 @@ static inline bool susfs_is_current_proc_umounted_app(void) {
 			current_uid().val >= 10000);
 }
 
+/* ReSukiSU live policy is authoritative for SUS_MAP on this legacy task
+ * lifecycle. Classification and isolated-app handling stay KernelSU-owned. */
+#ifdef CONFIG_KSU
+extern bool ksu_uid_should_hide_sus_map(uid_t uid);
+#endif
+
+static inline bool susfs_is_current_proc_umounted_app_for_sus_map(void) {
+#ifdef CONFIG_KSU
+	return ksu_uid_should_hide_sus_map(current_uid().val);
+#else
+	return susfs_is_current_proc_umounted_app();
+#endif
+}
+
 #define SUSFS_IS_INODE_SUS_MAP(inode) \
 		inode && \
 		unlikely(test_bit(AS_FLAGS_SUS_MAP, &inode->i_state)) && \
-		susfs_is_current_proc_umounted_app()
+		susfs_is_current_proc_umounted_app_for_sus_map()
 
 #define SUSFS_IS_INODE_OPEN_REDIRECT_WITHOUT_UID_CHECK(inode) \
 		inode && \

@@ -47,6 +47,8 @@ runs:
           # ReSukiSU SUSFS inline mode requires real call-sites in the exact
           # post-merge vendor tree. Apply them only after the SUSFS tree exists.
           python3 "$GITHUB_WORKSPACE/.github/scripts/apply_resukisu_inline_hooks.py" "$GITHUB_WORKSPACE/kernel-source"
+          python3 "$GITHUB_WORKSPACE/.github/scripts/validate_setresuid_susfs_contract.py" "$GITHUB_WORKSPACE/kernel-source"
+          python3 "$GITHUB_WORKSPACE/.github/scripts/test_susmap_policy_matrix.py"
           # SUS_MAP needs real procfs hooks on legacy 4.14. The injector is
           # exact-pattern/fail-closed and never imports a foreign task_mmu.c.
           python3 "$GITHUB_WORKSPACE/.github/scripts/apply_susmap_414.py" "$GITHUB_WORKSPACE/kernel-source"

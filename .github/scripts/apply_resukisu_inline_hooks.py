@@ -24,15 +24,58 @@ def once(rel: str, old: str, new: str, label: str) -> None:
 once("kernel/sys.c", """SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)
 {
 """, """#ifdef CONFIG_KSU_SUSFS
-extern int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid);
+extern int ksu_handle_setuid(uid_t new_uid, uid_t old_uid);
 #endif
 
 SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)
 {
+""", "setresuid-prototype")
+
+once("kernel/sys.c", """	retval = security_task_fix_setuid(new, old, LSM_SETID_RES);
+	if (retval < 0)
+		goto error;
+
+	return commit_creds(new);
+""", """	retval = security_task_fix_setuid(new, old, LSM_SETID_RES);
+	if (retval < 0)
+		goto error;
+
 #ifdef CONFIG_KSU_SUSFS
-	(void)ksu_handle_setresuid(ruid, euid, suid);
+	/* Use the validated transition while current still has zygote credentials. */
+	(void)ksu_handle_setuid(new->uid.val, old->uid.val);
 #endif
-""", "setresuid")
+	return commit_creds(new);
+""", "setresuid-validated-transition")
+
+# ReSukiSU's stock inline checker only greps the legacy wrapper name. Replace
+# that weak check with the direct validated transition this legacy port uses.
+once("drivers/kernelsu/tools/inline_hook_check.mk",
+     "$(eval $(call check_ksu_hook,ksu_handle_setresuid,$(srctree)/kernel/sys.c))",
+     "$(eval $(call check_ksu_hook,ksu_handle_setuid,$(srctree)/kernel/sys.c))",
+     "setresuid-inline-checker")
+
+# SUS_MAP needs a live-policy fallback on this legacy task lifecycle. Keep the
+# Android app-id classification and isolated-process semantics inside KernelSU.
+once("drivers/kernelsu/policy/allowlist.h",
+     "bool ksu_uid_should_umount(uid_t uid);\nstruct root_profile *ksu_get_root_profile(uid_t uid);",
+     "bool ksu_uid_should_umount(uid_t uid);\nbool ksu_uid_should_hide_sus_map(uid_t uid);\nstruct root_profile *ksu_get_root_profile(uid_t uid);",
+     "susmap-policy-declaration")
+
+once("drivers/kernelsu/policy/allowlist.c",
+     "\nvoid ksu_put_app_profile(struct app_profile *profile)\n{",
+     """
+bool ksu_uid_should_hide_sus_map(uid_t uid)
+{
+    if (!is_appuid(uid) && !is_isolated_process(uid))
+        return false;
+    if (is_isolated_process(uid))
+        return true;
+    return ksu_uid_should_umount(uid);
+}
+
+void ksu_put_app_profile(struct app_profile *profile)
+{""",
+     "susmap-policy-implementation")
 
 once("fs/stat.c", """#if !defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_SYS_NEWFSTATAT)
 SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,

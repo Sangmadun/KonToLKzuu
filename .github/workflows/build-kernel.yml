@@ -371,7 +371,7 @@ jobs:
           grep -q 'using SuSFS Inline hook' "$SRC/drivers/kernelsu/Kbuild" || { echo "::error::Kbuild inline path missing"; exit 1; }
           grep -q 'include.*inline_hook_check.mk' "$SRC/drivers/kernelsu/Kbuild" || { echo "::error::inline hook checker not selected"; exit 1; }
           for pair in \
-            'kernel/sys.c:(void)ksu_handle_setresuid(' \
+            'kernel/sys.c:(void)ksu_handle_setuid(new->uid.val, old->uid.val)' \
             'fs/stat.c:ksu_handle_stat(&dfd' \
             'fs/exec.c:ksu_handle_execveat(' \
             'fs/open.c:ksu_handle_faccessat(&dfd' \
